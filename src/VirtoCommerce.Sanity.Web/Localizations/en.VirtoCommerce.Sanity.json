@@ -1,0 +1,24 @@
+{
+  "Sanity": {
+    "blades": {
+      "hello-world": {
+        "title": "Hello world blade"
+      }
+    }
+  },
+  "permissions": {
+    "sanity:access": "Open Sanity menu",
+    "sanity:create": "Create Sanity related data",
+    "sanity:read": "View Sanity related data",
+    "sanity:update": "Update Sanity related data",
+    "sanity:delete": "Delete Sanity related data"
+  },
+  "settings": {
+    "Sanity": {
+      "Enabled": {
+        "title": "Sanity Enabled",
+        "description": "Sanity Enabled setting"
+      }
+    }
+  }
+}

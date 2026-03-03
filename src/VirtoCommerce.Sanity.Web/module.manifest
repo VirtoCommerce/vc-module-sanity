@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<module>
+  <id>VirtoCommerce.Sanity</id>
+  <version>3.1000.0</version>
+  <version-tag></version-tag>
+
+  <platformVersion>3.1000.0</platformVersion>
+  <dependencies>
+    <!--<dependency id="VirtoCommerce.Core" version="3.800.0" />-->
+  </dependencies>
+
+  <title>Sanity</title>
+  <description>Integration module for Sanity CMS</description>
+
+  <authors>
+    <author>Virto Commerce</author>
+  </authors>
+  <owners>
+    <owner>VirtoCommerce</owner>
+  </owners>
+
+  <projectUrl>https://github.com/VirtoCommerce/vc-module-sanity</projectUrl>
+  <iconUrl>Modules/$(VirtoCommerce.Sanity)/Content/logo.png</iconUrl>
+  <requireLicenseAcceptance>false</requireLicenseAcceptance>
+
+  <assemblyFile>VirtoCommerce.Sanity.Web.dll</assemblyFile>
+  <moduleType>VirtoCommerce.Sanity.Web.Module, VirtoCommerce.Sanity.Web</moduleType>
+
+  <releaseNotes>First version.</releaseNotes>
+  <copyright>Copyright © 2026 VirtoCommerce. All rights reserved</copyright>
+  <tags>extension module</tags>
+  <useFullTypeNameInSwagger>false</useFullTypeNameInSwagger>
+</module>
