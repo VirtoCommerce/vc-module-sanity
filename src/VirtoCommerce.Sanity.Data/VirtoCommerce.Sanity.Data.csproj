@@ -7,9 +7,6 @@
     <SonarQubeTestProject>false</SonarQubeTestProject>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="VirtoCommerce.Platform.Data" Version="3.1007.0" />
-  </ItemGroup>
-  <ItemGroup>
     <ProjectReference Include="..\VirtoCommerce.Sanity.Core\VirtoCommerce.Sanity.Core.csproj" />
   </ItemGroup>
 </Project>
