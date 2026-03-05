@@ -46,9 +46,9 @@ public class SanityConverter : ISanityConverter
         pageDocument.CreatedDate = body["_createdAt"].ToObject<DateTime>();
         pageDocument.ModifiedDate = body["_updatedAt"]?.ToObject<DateTime?>();
 
-        var idStartsWithDraft = pageDocument.Id?.StartsWithIgnoreCase("draft.") ?? false;
+        var idStartsWithDrafts = pageDocument.Id?.StartsWithIgnoreCase("drafts.") ?? false;
 
-        pageDocument.Status = idStartsWithDraft
+        pageDocument.Status = idStartsWithDrafts
             ? PageDocumentStatus.Draft
             : pageOperation.GetPageDocumentStatus();
 
