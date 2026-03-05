@@ -37,6 +37,7 @@ public class SanityConverter : ISanityConverter
 
         pageDocument.Content = body.ToString();
         pageDocument.OuterId = body["_id"]?.ToString();
+        pageDocument.Id = pageDocument.OuterId.EmptyToNull() ?? Guid.NewGuid().ToString();
         pageDocument.Permalink = body["permalink"]?["current"]?.ToString();
         pageDocument.Title = body["title"]?.ToString();
         pageDocument.Description = body["description"]?.ToString();
