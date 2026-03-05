@@ -13,7 +13,7 @@ Create a `virtoPage` document type in your [Sanity Studio](https://www.sanity.io
 ```typescript
 import { defineType, defineField } from 'sanity'
 
-export const pageSchema = defineType({
+export const virtoPageType = defineType({
   name: 'virtoPage',
   title: 'Virto Page',
   type: 'document',
@@ -50,10 +50,9 @@ To connect Sanity to this endpoint, configure webhooks in [Sanity Manage](https:
 
 | Setting | Value |
 |---|---|
-| **URL** | `https://<your-domain>/api/pages/sanity?storeId=<StoreId>&cultureName=<cultureName>` |
+| **URL** | `https://<your-domain>/api/pages/sanity?storeId=<StoreId>&cultureName=<cultureName>&api_key=<your-api-key>` |
 | **Trigger on** | `Create, Update, Delete` |
 | **HTTP method** | `POST` |
-| **HTTP headers** | `Name: api_key, Value: <your-api-key>` |
 
 ### Authorization
 
