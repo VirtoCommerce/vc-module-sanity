@@ -28,6 +28,11 @@ public class SanityConverter : ISanityConverter
 
     public virtual PageDocument GetPageDocument(string storeId, string cultureName, PageOperation pageOperation, JObject body, HttpRequest request)
     {
+        if ("system.release".EqualsIgnoreCase(body["_type"]?.ToString()))
+        {
+            return null;
+        }
+
         var pageDocument = AbstractTypeFactory<PageDocument>.TryCreateInstance();
         pageDocument.Source = "sanity";
         pageDocument.MimeType = "application/json";

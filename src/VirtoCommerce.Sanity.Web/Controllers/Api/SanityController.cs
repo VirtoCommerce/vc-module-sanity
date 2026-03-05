@@ -41,11 +41,15 @@ public class SanityController(
             return Forbid();
         }
 
-        var pageChangedEvent = AbstractTypeFactory<PagesDomainEvent>.TryCreateInstance();
-        pageChangedEvent.Page = sanityConverter.GetPageDocument(storeId, cultureName, pageOperation, body, Request);
-        pageChangedEvent.Operation = pageOperation;
+        var pageDocument = sanityConverter.GetPageDocument(storeId, cultureName, pageOperation, body, Request);
+        if (pageDocument != null)
+        {
+            var pageChangedEvent = AbstractTypeFactory<PagesDomainEvent>.TryCreateInstance();
+            pageChangedEvent.Page = pageDocument;
+            pageChangedEvent.Operation = pageOperation;
 
-        await eventPublisher.Publish(pageChangedEvent);
+            await eventPublisher.Publish(pageChangedEvent);
+        }
 
         return Ok();
     }
