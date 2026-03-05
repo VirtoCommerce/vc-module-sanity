@@ -30,14 +30,23 @@ public class SanityConverter : ISanityConverter
     {
         var pageDocument = AbstractTypeFactory<PageDocument>.TryCreateInstance();
         pageDocument.Source = "sanity";
+        pageDocument.MimeType = "application/json";
+        pageDocument.Content = body.ToString();
 
         pageDocument.StoreId = storeId;
         pageDocument.CultureName = cultureName;
-        pageDocument.Status = pageOperation.GetPageDocumentStatus();
 
-        pageDocument.Content = body.ToString();
         pageDocument.OuterId = body["_id"]?.ToString();
-        pageDocument.Id = pageDocument.OuterId.EmptyToNull() ?? Guid.NewGuid().ToString();
+        pageDocument.Id = pageDocument.OuterId;
+        pageDocument.CreatedDate = body["_createdAt"].ToObject<DateTime>();
+        pageDocument.ModifiedDate = body["_updatedAt"]?.ToObject<DateTime?>();
+
+        var idStartsWithDraft = pageDocument.Id?.StartsWithIgnoreCase("draft.") ?? false;
+
+        pageDocument.Status = idStartsWithDraft
+            ? PageDocumentStatus.Draft
+            : pageOperation.GetPageDocumentStatus();
+
         pageDocument.Permalink = body["permalink"]?["current"]?.ToString();
         pageDocument.Title = body["title"]?.ToString();
         pageDocument.Description = body["description"]?.ToString();
