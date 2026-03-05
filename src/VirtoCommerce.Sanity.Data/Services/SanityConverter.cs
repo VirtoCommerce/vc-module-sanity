@@ -28,7 +28,7 @@ public class SanityConverter : ISanityConverter
 
     public virtual PageDocument GetPageDocument(string storeId, string cultureName, PageOperation pageOperation, JObject body, HttpRequest request)
     {
-        if ("system.release".EqualsIgnoreCase(body["_type"]?.ToString()))
+        if (body["_type"].ToString().EqualsIgnoreCase("system.release"))
         {
             return null;
         }
@@ -41,12 +41,12 @@ public class SanityConverter : ISanityConverter
         pageDocument.StoreId = storeId;
         pageDocument.CultureName = cultureName;
 
-        pageDocument.OuterId = body["_id"]?.ToString();
+        pageDocument.OuterId = body["_id"].ToString();
         pageDocument.Id = pageDocument.OuterId;
         pageDocument.CreatedDate = body["_createdAt"].ToObject<DateTime>();
-        pageDocument.ModifiedDate = body["_updatedAt"]?.ToObject<DateTime?>();
+        pageDocument.ModifiedDate = body["_updatedAt"].ToObject<DateTime>();
 
-        var idStartsWithDrafts = pageDocument.Id?.StartsWithIgnoreCase("drafts.") ?? false;
+        var idStartsWithDrafts = pageDocument.Id.StartsWithIgnoreCase("drafts.");
 
         pageDocument.Status = idStartsWithDrafts
             ? PageDocumentStatus.Draft
