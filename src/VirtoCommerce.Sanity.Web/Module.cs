@@ -3,6 +3,8 @@ using Microsoft.Extensions.DependencyInjection;
 using VirtoCommerce.Platform.Core.Modularity;
 using VirtoCommerce.Platform.Core.Security;
 using VirtoCommerce.Sanity.Core;
+using VirtoCommerce.Sanity.Core.Services;
+using VirtoCommerce.Sanity.Data.Services;
 
 namespace VirtoCommerce.Sanity.Web;
 
@@ -12,6 +14,7 @@ public class Module : IModule
 
     public void Initialize(IServiceCollection serviceCollection)
     {
+        serviceCollection.AddTransient<ISanityConverter, SanityConverter>();
     }
 
     public void PostInitialize(IApplicationBuilder appBuilder)

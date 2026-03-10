@@ -2,45 +2,66 @@
 
 ## Overview
 
-Short overview of what the new module is.
+The Sanity module integrates [Sanity](https://www.sanity.io/) CMS with Virto Commerce Pages. It exposes a webhook endpoint that receives page create, update, and delete events from Sanity and publishes them to the Pages module.
 
-- What is the new or updated experience?
+## Sanity Schema
 
-- Does this module replace an existing module/experience? If yes, what is the transition plan?
+Create a `virtoPage` document type in your [Sanity Studio](https://www.sanity.io/docs/sanity-studio-quickstart/setting-up-your-studio) project.
 
-- Does this module has dependency on other ? If yes, list/explain the dependencies.
+**`schemaTypes/virtoPageType.ts`:**
 
-- List the key deployment scenarios - why would people use this module?
+```typescript
+import { defineType, defineField } from 'sanity'
 
-## Functional Requirements
+export const virtoPageType = defineType({
+  name: 'virtoPage',
+  title: 'Virto Page',
+  type: 'document',
+  fields: [
+    defineField({name: 'title', type: 'string', validation: (rule) => rule.required()}),
+    defineField({name: 'permalink', type: 'slug', options: {source: 'title'}, validation: (rule) => rule.required()}),
+    defineField({name: 'description', type: 'text'}),
+    defineField({name: 'content', type: 'array', of: [{type: 'block'}]}),
+    defineField({name: 'visibility', type: 'string', options: {list: ['Public', 'Private']}}),
+    defineField({name: 'userGroups', type: 'array', of: [{type: 'string'}]}),
+    defineField({name: 'startDate', type: 'datetime'}),
+    defineField({name: 'endDate', type: 'datetime'}),
+  ],
+})
+```
 
-Short description of the new module functional requirements.
+Register the schema in `schemaTypes/index.ts`:
 
-## Scenarios
+```typescript
+import {virtoPageType} from './virtoPageType'
 
-List of scenarios that the new module implements
+export const schemaTypes = [virtoPageType]
+```
 
-1. [Scenario 1](/doc/scenario-name1.md)
-1. [Scenario 2](/doc/scenario-name2.md)
-1. [Scenario 3](/doc/scenario-name3.md)
-    1. [Scenario 3.1](/doc/scenario-name31.md)
-    1. [Scenario 3.2](/doc/scenario-name32.md)
-1. [Scenario 4](/doc/scenario-name4.md)
+## Webhook Configuration
 
-## Web API
+The module exposes a single endpoint:
 
-Web API documentation for each module is built out automatically and can be accessed by following the link bellow:
-<https://link-to-swager-api>
+```
+POST /api/pages/sanity?storeId={storeId}&cultureName={cultureName}
+```
 
-## Database Model
+To connect Sanity to this endpoint, configure webhooks in [Sanity Manage](https://www.sanity.io/manage) → your project → **API** → **Webhooks**.
 
-![DB model](./docs/media/diagram-db-model.png)
+| Setting | Value |
+|---|---|
+| **URL** | `https://<your-domain>/api/pages/sanity?storeId=<StoreId>&cultureName=<cultureName>&api_key=<your-api-key>` |
+| **Trigger on** | `Create, Update, Delete` |
+| **HTTP method** | `POST` |
 
-## Related topics
+### Authorization
 
-[Some Article1](some-article1.md)
+The endpoint requires an API key for a VirtoCommerce user with the following permissions:
 
-[Some Article2](some-article2.md)
+- `sanity:update` — for create and update operations
+- `sanity:delete` — for delete operations
+
+You can verify webhook delivery in Sanity Manage → Webhooks → **Your webhook** → **...** → **Show attempt log**.
 
 ## License
 
