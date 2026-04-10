@@ -214,7 +214,7 @@ public class SanityContentProvider(
             storeId);
     }
 
-    private static T GetSettingValue<T>(IDictionary<string, ObjectSettingEntry> settings, string name)
+    private static T GetSettingValue<T>(Dictionary<string, ObjectSettingEntry> settings, string name)
     {
         return settings.TryGetValue(name, out var entry) && entry?.Value is T value ? value : default;
     }
