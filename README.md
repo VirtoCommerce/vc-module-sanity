@@ -22,6 +22,8 @@ export const virtoPageType = defineType({
     defineField({name: 'permalink', type: 'slug', options: {source: 'title'}, validation: (rule) => rule.required()}),
     defineField({name: 'description', type: 'text'}),
     defineField({name: 'content', type: 'array', of: [{type: 'block'}]}),
+    defineField({name: 'storeId', type: 'string', title: 'Store ID'}),
+    defineField({name: 'cultureName', type: 'string', title: 'Culture Name'}),
     defineField({name: 'visibility', type: 'string', options: {list: ['Public', 'Private']}}),
     defineField({name: 'userGroups', type: 'array', of: [{type: 'string'}]}),
     defineField({name: 'startDate', type: 'datetime'}),
@@ -37,6 +39,35 @@ import {virtoPageType} from './virtoPageType'
 
 export const schemaTypes = [virtoPageType]
 ```
+
+## Pages Module Integration
+
+The module integrates with [Virto Pages](https://github.com/VirtoCommerce/vc-module-pages) as a content provider (`IPageContentProvider`), enabling:
+
+* **Index Rebuild** — full reindex of all Sanity pages from the admin UI
+* **Scheduled Sync** — periodic synchronization of modified pages using `_updatedAt` filter
+* **Webhook Push** — real-time page updates via `POST /api/pages/sanity` (existing functionality)
+
+The content provider uses the [Sanity Content API (GROQ)](https://www.sanity.io/docs/http-query) to query pages. Configure the following store-level settings:
+
+* **Sanity.ProjectId** — your Sanity project ID
+* **Sanity.Dataset** — dataset name (default: `production`)
+* **Sanity.ApiToken** — API token for authentication
+* **Sanity.PageType** — document type to index (default: `page`)
+
+### Required Document Fields
+
+For index rebuild and scheduled sync, Sanity page documents should include:
+
+* **`storeId`** (string) — the Virto Commerce store ID
+* **`cultureName`** (string) — the culture/language code (e.g., `en-US`)
+
+These fields are read directly from the document during reindexation. Webhook query parameters are used as fallback.
+
+### References
+
+* [Sanity Content API (GROQ)](https://www.sanity.io/docs/http-query)
+* [Sanity HTTP API](https://www.sanity.io/docs/reference/http)
 
 ## Webhook Configuration
 

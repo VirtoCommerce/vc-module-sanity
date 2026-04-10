@@ -38,8 +38,8 @@ public class SanityConverter : ISanityConverter
         pageDocument.MimeType = "application/json";
         pageDocument.Content = body.ToString();
 
-        pageDocument.StoreId = storeId;
-        pageDocument.CultureName = cultureName;
+        pageDocument.StoreId = body["storeId"]?.ToString();
+        pageDocument.CultureName = body["cultureName"]?.ToString();
 
         pageDocument.OuterId = body["_id"].ToString();
         pageDocument.Id = pageDocument.OuterId;

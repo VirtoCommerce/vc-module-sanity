@@ -44,6 +44,14 @@ public class SanityController(
         var pageDocument = sanityConverter.GetPageDocument(storeId, cultureName, pageOperation, body, Request);
         if (pageDocument != null)
         {
+            if (pageDocument.StoreId.IsNullOrEmpty())
+            {
+                pageDocument.StoreId = storeId;
+            }
+            if (pageDocument.CultureName.IsNullOrEmpty())
+            {
+                pageDocument.CultureName = cultureName;
+            }
             var pageChangedEvent = AbstractTypeFactory<PagesDomainEvent>.TryCreateInstance();
             pageChangedEvent.Page = pageDocument;
             pageChangedEvent.Operation = pageOperation;

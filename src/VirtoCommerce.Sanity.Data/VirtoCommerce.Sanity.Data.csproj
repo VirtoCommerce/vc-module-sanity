@@ -7,6 +7,9 @@
     <SonarQubeTestProject>false</SonarQubeTestProject>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\VirtoCommerce.Sanity.Core\VirtoCommerce.Sanity.Core.csproj" />
   </ItemGroup>
 </Project>

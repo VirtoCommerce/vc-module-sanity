@@ -6,7 +6,7 @@
 
   <platformVersion>3.1000.0</platformVersion>
   <dependencies>
-    <dependency id="VirtoCommerce.Pages" version="3.1000.0" />
+    <dependency id="VirtoCommerce.Pages" version="3.1004.0-alpha.53-vcst-4848" optional="true" />
   </dependencies>
 
   <title>Sanity</title>
