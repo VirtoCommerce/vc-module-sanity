@@ -101,7 +101,7 @@ public class SanityContentProvider(
                     continue;
                 }
 
-                var pageDocument = sanityConverter.GetPageDocument(storeId, null, Pages.Core.Events.PageOperation.Publish, doc, null);
+                var pageDocument = sanityConverter.GetPageDocument(storeId, string.Empty, Pages.Core.Events.PageOperation.Publish, doc, null);
                 if (pageDocument == null)
                 {
                     continue;
@@ -165,16 +165,34 @@ public class SanityContentProvider(
 
             foreach (var store in storesResult.Results)
             {
-                var enabledSetting = await settingsManager.GetObjectSettingAsync(ModuleConstants.Settings.General.Enabled.Name, "Store", store.Id);
+                var settings = (await settingsManager.GetObjectSettingsAsync(new[]
+                {
+                    ModuleConstants.Settings.General.Enabled.Name,
+                    ModuleConstants.Settings.General.ProjectId.Name,
+                    ModuleConstants.Settings.General.Dataset.Name,
+                    ModuleConstants.Settings.General.ApiToken.Name,
+                    ModuleConstants.Settings.General.PageType.Name,
+                }, "Store", store.Id)).ToDictionary(x => x.Name, StringComparer.OrdinalIgnoreCase);
+
+                settings.TryGetValue(ModuleConstants.Settings.General.Enabled.Name, out var enabledSetting);
                 if (enabledSetting?.Value is not bool enabled || !enabled)
                 {
                     continue;
                 }
 
-                var projectIdSetting = await settingsManager.GetObjectSettingAsync(ModuleConstants.Settings.General.ProjectId.Name, "Store", store.Id);
-                var datasetSetting = await settingsManager.GetObjectSettingAsync(ModuleConstants.Settings.General.Dataset.Name, "Store", store.Id);
-                var apiTokenSetting = await settingsManager.GetObjectSettingAsync(ModuleConstants.Settings.General.ApiToken.Name, "Store", store.Id);
-                var pageTypeSetting = await settingsManager.GetObjectSettingAsync(ModuleConstants.Settings.General.PageType.Name, "Store", store.Id);
+                settings.TryGetValue(ModuleConstants.Settings.General.ProjectId.Name, out var projectIdSetting);
+                settings.TryGetValue(ModuleConstants.Settings.General.Dataset.Name, out var datasetSetting);
+                settings.TryGetValue(ModuleConstants.Settings.General.ApiToken.Name, out var apiTokenSetting);
+                settings.TryGetValue(ModuleConstants.Settings.General.PageType.Name, out var pageTypeSetting);
+                if (enabledSetting?.Value is not bool enabled || !enabled)
+                {
+                    continue;
+                }
+
+                storeSettings.TryGetValue(ModuleConstants.Settings.General.ProjectId.Name, out var projectIdSetting);
+                storeSettings.TryGetValue(ModuleConstants.Settings.General.Dataset.Name, out var datasetSetting);
+                storeSettings.TryGetValue(ModuleConstants.Settings.General.ApiToken.Name, out var apiTokenSetting);
+                storeSettings.TryGetValue(ModuleConstants.Settings.General.PageType.Name, out var pageTypeSetting);
 
                 var projectId = projectIdSetting?.Value as string;
                 var apiToken = apiTokenSetting?.Value as string;

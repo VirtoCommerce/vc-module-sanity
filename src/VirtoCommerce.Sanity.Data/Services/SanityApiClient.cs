@@ -19,16 +19,25 @@ public class SanityApiClient(IHttpClientFactory httpClientFactory) : ISanityApiC
         var client = httpClientFactory.CreateClient("Sanity");
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiToken);
 
-        var response = await client.GetAsync(url);
-        response.EnsureSuccessStatusCode();
-
-        var json = JObject.Parse(await response.Content.ReadAsStringAsync());
-        var results = json["result"]?.ToObject<List<JObject>>() ?? [];
-
-        return new SanityQueryResponse
+        try
         {
-            Results = results,
-            TotalCount = results.Count,
-        };
+            var response = await client.GetAsync(url);
+            response.EnsureSuccessStatusCode();
+
+            var json = JObject.Parse(await response.Content.ReadAsStringAsync());
+            var results = json["result"]?.ToObject<List<JObject>>() ?? [];
+
+            return new SanityQueryResponse
+            {
+                Results = results,
+                TotalCount = results.Count,
+            };
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new HttpRequestException(
+                $"Sanity API query failed for project '{projectId}', dataset '{dataset}', query '{groqQuery}'.",
+                ex);
+        }
     }
 }
