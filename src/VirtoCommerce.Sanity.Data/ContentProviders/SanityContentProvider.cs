@@ -107,13 +107,11 @@ public class SanityContentProvider(
                     continue;
                 }
 
-                var pageDocument = sanityConverter.GetPageDocument(storeId, string.Empty, Pages.Core.Events.PageOperation.Publish, doc, null);
+                var pageDocument = sanityConverter.GetPageDocument(storeId, null, Pages.Core.Events.PageOperation.Publish, doc, null);
                 if (pageDocument == null)
                 {
                     continue;
                 }
-
-                pageDocument.Status = PageDocumentStatus.Published;
 
                 if (pageDocument.StoreId.IsNullOrEmpty())
                 {
