@@ -72,8 +72,8 @@ public class SanityContentProvider(
         var normalSkip = skip < int.MinValue ? int.MinValue : (int)skip;
         var normalTake = take < int.MinValue ? int.MinValue : (int)take;
 
-        var safeSkip = skip > int.MaxValue ? int.MaxValue : normalSkip;
-        var safeTake = take > int.MaxValue ? int.MaxValue : normalTake;
+        var safeSkip = skip < 0 ? 0 : normalSkip;
+        var safeTake = take < 0 ? 0 : normalTake;
 
         return allChanges
             .OrderByDescending(x => x.ChangeDate)

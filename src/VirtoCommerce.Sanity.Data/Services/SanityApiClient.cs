@@ -38,7 +38,7 @@ public class SanityApiClient(IHttpClientFactory httpClientFactory) : ISanityApiC
         catch (HttpRequestException ex)
         {
             throw new HttpRequestException(
-                $"Sanity API query failed for project '{projectId}', dataset '{dataset}', query '{groqQuery}'.",
+                $"Sanity API query failed for project '{projectId}', dataset '{dataset}'.",
                 ex);
         }
     }
