@@ -190,28 +190,21 @@ public class SanityContentProvider(
             ModuleConstants.Settings.General.PageType.Name,
         ], "Store", storeId)).ToDictionary(x => x.Name, StringComparer.OrdinalIgnoreCase);
 
-        settings.TryGetValue(ModuleConstants.Settings.General.Enabled.Name, out var enabledSetting);
-        if (enabledSetting?.Value is not bool enabled || !enabled)
+        if (!GetSettingValue<bool>(settings, ModuleConstants.Settings.General.Enabled.Name))
         {
             return;
         }
 
-        settings.TryGetValue(ModuleConstants.Settings.General.ProjectId.Name, out var projectIdSetting);
-        settings.TryGetValue(ModuleConstants.Settings.General.ApiToken.Name, out var apiTokenSetting);
-
-        var projectId = projectIdSetting?.Value as string;
-        var apiToken = apiTokenSetting?.Value as string;
+        var projectId = GetSettingValue<string>(settings, ModuleConstants.Settings.General.ProjectId.Name);
+        var apiToken = GetSettingValue<string>(settings, ModuleConstants.Settings.General.ApiToken.Name);
 
         if (string.IsNullOrEmpty(projectId) || string.IsNullOrEmpty(apiToken))
         {
             return;
         }
 
-        settings.TryGetValue(ModuleConstants.Settings.General.Dataset.Name, out var datasetSetting);
-        settings.TryGetValue(ModuleConstants.Settings.General.PageType.Name, out var pageTypeSetting);
-
-        var dataset = datasetSetting?.Value as string;
-        var pageType = pageTypeSetting?.Value as string;
+        var dataset = GetSettingValue<string>(settings, ModuleConstants.Settings.General.Dataset.Name);
+        var pageType = GetSettingValue<string>(settings, ModuleConstants.Settings.General.PageType.Name);
 
         await action(
             projectId,
@@ -219,5 +212,10 @@ public class SanityContentProvider(
             apiToken,
             string.IsNullOrEmpty(pageType) ? "page" : pageType,
             storeId);
+    }
+
+    private static T GetSettingValue<T>(IDictionary<string, ObjectSettingEntry> settings, string name)
+    {
+        return settings.TryGetValue(name, out var entry) && entry?.Value is T value ? value : default;
     }
 }
