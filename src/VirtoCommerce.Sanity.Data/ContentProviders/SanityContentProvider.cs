@@ -69,8 +69,8 @@ public class SanityContentProvider(
             }));
         });
 
-        var normalSkip = skip < int.MinValue ? int.MinValue : (int)skip;
-        var normalTake = take < int.MinValue ? int.MinValue : (int)take;
+        var normalSkip = skip > int.MaxValue ? int.MaxValue : (int)skip;
+        var normalTake = take > int.MaxValue ? int.MaxValue : (int)take;
 
         var safeSkip = skip < 0 ? 0 : normalSkip;
         var safeTake = take < 0 ? 0 : normalTake;
