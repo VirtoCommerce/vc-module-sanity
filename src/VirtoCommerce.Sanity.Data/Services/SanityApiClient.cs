@@ -10,6 +10,8 @@ namespace VirtoCommerce.Sanity.Data.Services;
 
 public class SanityApiClient(IHttpClientFactory httpClientFactory) : ISanityApiClient
 {
+    // Intentionally pin the Sanity API version to keep response behavior stable and avoid
+    // unexpected breaking changes. Review compatibility before updating this value.
     private const string ApiVersion = "v2021-10-21";
 
     public async Task<SanityQueryResponse> QueryAsync(string projectId, string dataset, string apiToken, string groqQuery)

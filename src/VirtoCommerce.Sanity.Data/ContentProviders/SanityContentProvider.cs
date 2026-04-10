@@ -69,10 +69,16 @@ public class SanityContentProvider(
             }));
         });
 
+        var normalSkip = skip < int.MinValue ? int.MinValue : (int)skip;
+        var normalTake = take < int.MinValue ? int.MinValue : (int)take;
+
+        var safeSkip = skip > int.MaxValue ? int.MaxValue : normalSkip;
+        var safeTake = take > int.MaxValue ? int.MaxValue : normalTake;
+
         return allChanges
             .OrderByDescending(x => x.ChangeDate)
-            .Skip(Convert.ToInt32(skip))
-            .Take(Convert.ToInt32(take))
+            .Skip(safeSkip)
+            .Take(safeTake)
             .ToList();
     }
 
@@ -157,55 +163,61 @@ public class SanityContentProvider(
         criteria.Take = storeBatchSize;
         criteria.Skip = 0;
 
-        int totalStores;
+        int storeCount;
         do
         {
             var storesResult = await storeSearchService.SearchAsync(criteria);
-            totalStores = storesResult.TotalCount;
+            storeCount = storesResult.TotalCount;
 
             foreach (var store in storesResult.Results)
             {
-                var settings = (await settingsManager.GetObjectSettingsAsync(new[]
-                {
-                    ModuleConstants.Settings.General.Enabled.Name,
-                    ModuleConstants.Settings.General.ProjectId.Name,
-                    ModuleConstants.Settings.General.Dataset.Name,
-                    ModuleConstants.Settings.General.ApiToken.Name,
-                    ModuleConstants.Settings.General.PageType.Name,
-                }, "Store", store.Id)).ToDictionary(x => x.Name, StringComparer.OrdinalIgnoreCase);
-
-                settings.TryGetValue(ModuleConstants.Settings.General.Enabled.Name, out var enabledSetting);
-                if (enabledSetting?.Value is not bool enabled || !enabled)
-                {
-                    continue;
-                }
-
-                settings.TryGetValue(ModuleConstants.Settings.General.ProjectId.Name, out var projectIdSetting);
-                settings.TryGetValue(ModuleConstants.Settings.General.Dataset.Name, out var datasetSetting);
-                settings.TryGetValue(ModuleConstants.Settings.General.ApiToken.Name, out var apiTokenSetting);
-                settings.TryGetValue(ModuleConstants.Settings.General.PageType.Name, out var pageTypeSetting);
-
-                var projectId = projectIdSetting?.Value as string;
-                var apiToken = apiTokenSetting?.Value as string;
-
-                if (string.IsNullOrEmpty(projectId) || string.IsNullOrEmpty(apiToken))
-                {
-                    continue;
-                }
-
-                var dataset = datasetSetting?.Value as string;
-                var pageType = pageTypeSetting?.Value as string;
-
-                await action(
-                    projectId,
-                    string.IsNullOrEmpty(dataset) ? "production" : dataset,
-                    apiToken,
-                    string.IsNullOrEmpty(pageType) ? "page" : pageType,
-                    store.Id);
+                await TryProcessStoreAsync(store.Id, action);
             }
 
             criteria.Skip += storeBatchSize;
         }
-        while (criteria.Skip < totalStores);
+        while (criteria.Skip < storeCount);
+    }
+
+    private async Task TryProcessStoreAsync(string storeId, Func<string, string, string, string, string, Task> action)
+    {
+        var settings = (await settingsManager.GetObjectSettingsAsync(
+        [
+            ModuleConstants.Settings.General.Enabled.Name,
+            ModuleConstants.Settings.General.ProjectId.Name,
+            ModuleConstants.Settings.General.Dataset.Name,
+            ModuleConstants.Settings.General.ApiToken.Name,
+            ModuleConstants.Settings.General.PageType.Name,
+        ], "Store", storeId)).ToDictionary(x => x.Name, StringComparer.OrdinalIgnoreCase);
+
+        settings.TryGetValue(ModuleConstants.Settings.General.Enabled.Name, out var enabledSetting);
+        if (enabledSetting?.Value is not bool enabled || !enabled)
+        {
+            return;
+        }
+
+        settings.TryGetValue(ModuleConstants.Settings.General.ProjectId.Name, out var projectIdSetting);
+        settings.TryGetValue(ModuleConstants.Settings.General.ApiToken.Name, out var apiTokenSetting);
+
+        var projectId = projectIdSetting?.Value as string;
+        var apiToken = apiTokenSetting?.Value as string;
+
+        if (string.IsNullOrEmpty(projectId) || string.IsNullOrEmpty(apiToken))
+        {
+            return;
+        }
+
+        settings.TryGetValue(ModuleConstants.Settings.General.Dataset.Name, out var datasetSetting);
+        settings.TryGetValue(ModuleConstants.Settings.General.PageType.Name, out var pageTypeSetting);
+
+        var dataset = datasetSetting?.Value as string;
+        var pageType = pageTypeSetting?.Value as string;
+
+        await action(
+            projectId,
+            string.IsNullOrEmpty(dataset) ? "production" : dataset,
+            apiToken,
+            string.IsNullOrEmpty(pageType) ? "page" : pageType,
+            storeId);
     }
 }
