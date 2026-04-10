@@ -184,15 +184,6 @@ public class SanityContentProvider(
                 settings.TryGetValue(ModuleConstants.Settings.General.Dataset.Name, out var datasetSetting);
                 settings.TryGetValue(ModuleConstants.Settings.General.ApiToken.Name, out var apiTokenSetting);
                 settings.TryGetValue(ModuleConstants.Settings.General.PageType.Name, out var pageTypeSetting);
-                if (enabledSetting?.Value is not bool enabled || !enabled)
-                {
-                    continue;
-                }
-
-                storeSettings.TryGetValue(ModuleConstants.Settings.General.ProjectId.Name, out var projectIdSetting);
-                storeSettings.TryGetValue(ModuleConstants.Settings.General.Dataset.Name, out var datasetSetting);
-                storeSettings.TryGetValue(ModuleConstants.Settings.General.ApiToken.Name, out var apiTokenSetting);
-                storeSettings.TryGetValue(ModuleConstants.Settings.General.PageType.Name, out var pageTypeSetting);
 
                 var projectId = projectIdSetting?.Value as string;
                 var apiToken = apiTokenSetting?.Value as string;
