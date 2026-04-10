@@ -34,8 +34,8 @@ public static class ModuleConstants
         {
             public static SettingDescriptor Enabled { get; } = new()
             {
-                Name = $"{ModuleConstants.GroupName}.Enabled",
-                GroupName = ModuleConstants.GroupName,
+                Name = $"{GroupName}.Enabled",
+                GroupName = $"CMS|{GroupName}",
                 ValueType = SettingValueType.Boolean,
                 IsPublic = true,
                 DefaultValue = false,
@@ -43,32 +43,32 @@ public static class ModuleConstants
 
             public static SettingDescriptor ProjectId { get; } = new()
             {
-                Name = $"{ModuleConstants.GroupName}.ProjectId",
-                GroupName = ModuleConstants.GroupName,
+                Name = $"{GroupName}.ProjectId",
+                GroupName = $"CMS|{GroupName}",
                 ValueType = SettingValueType.ShortText,
                 DefaultValue = string.Empty,
             };
 
             public static SettingDescriptor Dataset { get; } = new()
             {
-                Name = $"{ModuleConstants.GroupName}.Dataset",
-                GroupName = ModuleConstants.GroupName,
+                Name = $"{GroupName}.Dataset",
+                GroupName = $"CMS|{GroupName}",
                 ValueType = SettingValueType.ShortText,
                 DefaultValue = "production",
             };
 
             public static SettingDescriptor ApiToken { get; } = new()
             {
-                Name = $"{ModuleConstants.GroupName}.ApiToken",
-                GroupName = ModuleConstants.GroupName,
+                Name = $"{GroupName}.ApiToken",
+                GroupName = $"CMS|{GroupName}",
                 ValueType = SettingValueType.SecureString,
                 DefaultValue = string.Empty,
             };
 
             public static SettingDescriptor PageType { get; } = new()
             {
-                Name = $"{ModuleConstants.GroupName}.PageType",
-                GroupName = ModuleConstants.GroupName,
+                Name = $"{GroupName}.PageType",
+                GroupName = $"CMS|{GroupName}",
                 ValueType = SettingValueType.ShortText,
                 DefaultValue = "page",
             };
