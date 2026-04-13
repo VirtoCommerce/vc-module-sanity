@@ -21,7 +21,7 @@ public class Module : IModule
         serviceCollection.AddHttpClient("Sanity");
         serviceCollection.AddTransient<ISanityConverter, SanityConverter>();
         serviceCollection.AddTransient<ISanityApiClient, SanityApiClient>();
-        serviceCollection.AddTransient<SanityContentProvider>();
+        serviceCollection.AddTransient<IPageContentProvider, SanityContentProvider>();
     }
 
     public void PostInitialize(IApplicationBuilder appBuilder)
@@ -37,9 +37,6 @@ public class Module : IModule
         var permissionsRegistrar = serviceProvider.GetRequiredService<IPermissionsRegistrar>();
         permissionsRegistrar.RegisterPermissions(ModuleInfo.Id, "Sanity", ModuleConstants.Security.Permissions.AllPermissions);
 
-        // Register content provider for Pages module
-        var contentProviderRegistrar = serviceProvider.GetService<IPageContentProviderRegistrar>();
-        contentProviderRegistrar?.RegisterProvider(() => serviceProvider.GetRequiredService<SanityContentProvider>());
     }
 
     public void Uninstall()

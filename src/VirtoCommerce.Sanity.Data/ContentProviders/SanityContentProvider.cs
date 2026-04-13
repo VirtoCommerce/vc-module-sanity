@@ -25,28 +25,7 @@ public class SanityContentProvider(
     public string ProviderName => "Sanity";
     public bool SupportsReindexation => true;
 
-    public async Task<long> GetTotalChangesCountAsync(DateTime? startDate, DateTime? endDate)
-    {
-        long totalCount = 0;
-        var processedProjects = new HashSet<string>();
-
-        await ForEachStoreAsync(async (projectId, dataset, apiToken, pageType, _) =>
-        {
-            if (!processedProjects.Add($"{projectId}:{dataset}:{pageType}"))
-            {
-                return;
-            }
-
-            var query = BuildCountQuery(pageType, startDate, endDate);
-            var response = await apiClient.QueryAsync(projectId, dataset, apiToken, query);
-            var count = response.Results.FirstOrDefault()?["count"]?.Value<long>() ?? 0;
-            totalCount += count;
-        });
-
-        return totalCount;
-    }
-
-    public async Task<IList<IndexDocumentChange>> GetChangesAsync(DateTime? startDate, DateTime? endDate, long skip, long take)
+    public async Task<PageChangesSearchResult> SearchChangesAsync(PageChangesSearchCriteria criteria)
     {
         var allChanges = new List<IndexDocumentChange>();
         var processedProjects = new HashSet<string>();
@@ -58,7 +37,7 @@ public class SanityContentProvider(
                 return;
             }
 
-            var query = BuildChangesQuery(pageType, startDate, endDate);
+            var query = BuildChangesQuery(pageType, criteria.StartDate, criteria.EndDate);
             var response = await apiClient.QueryAsync(projectId, dataset, apiToken, query);
 
             allChanges.AddRange(response.Results.Select(doc => new IndexDocumentChange
@@ -69,17 +48,13 @@ public class SanityContentProvider(
             }));
         });
 
-        var normalSkip = skip > int.MaxValue ? int.MaxValue : (int)skip;
-        var normalTake = take > int.MaxValue ? int.MaxValue : (int)take;
+        var ordered = allChanges.OrderByDescending(x => x.ChangeDate).ToList();
 
-        var safeSkip = skip < 0 ? 0 : normalSkip;
-        var safeTake = take < 0 ? 0 : normalTake;
-
-        return allChanges
-            .OrderByDescending(x => x.ChangeDate)
-            .Skip(safeSkip)
-            .Take(safeTake)
-            .ToList();
+        return new PageChangesSearchResult
+        {
+            TotalCount = ordered.Count,
+            Results = ordered.Skip(criteria.Skip).Take(criteria.Take).ToList(),
+        };
     }
 
     public async Task<IList<PageDocument>> GetByIdsAsync(IList<string> ids)
@@ -123,12 +98,6 @@ public class SanityContentProvider(
         });
 
         return result;
-    }
-
-    private static string BuildCountQuery(string pageType, DateTime? startDate, DateTime? endDate)
-    {
-        var dateFilter = BuildDateFilter(startDate, endDate);
-        return $"count(*[_type == \"{pageType}\"{dateFilter}])";
     }
 
     private static string BuildChangesQuery(string pageType, DateTime? startDate, DateTime? endDate)
