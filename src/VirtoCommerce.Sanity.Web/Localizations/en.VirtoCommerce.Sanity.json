@@ -17,7 +17,23 @@
     "Sanity": {
       "Enabled": {
         "title": "Sanity Enabled",
-        "description": "Sanity Enabled setting"
+        "description": "Enable/disable Sanity integration for the store"
+      },
+      "ProjectId": {
+        "title": "Project ID",
+        "description": "Sanity project ID for Content API access"
+      },
+      "Dataset": {
+        "title": "Dataset",
+        "description": "Sanity dataset name (default: production)"
+      },
+      "ApiToken": {
+        "title": "API Token",
+        "description": "Sanity API token for Content API authentication"
+      },
+      "PageType": {
+        "title": "Page Type",
+        "description": "Sanity document type to index as pages (default: page)"
       }
     }
   }
