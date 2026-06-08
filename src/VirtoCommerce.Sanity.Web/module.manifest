@@ -21,7 +21,7 @@
   </owners>
 
   <projectUrl>https://github.com/VirtoCommerce/vc-module-sanity</projectUrl>
-  <iconUrl>Modules/$(VirtoCommerce.Sanity)/Content/logo.png</iconUrl>
+  <iconUrl>Modules/$(VirtoCommerce.Sanity)/Content/logo.svg</iconUrl>
   <requireLicenseAcceptance>false</requireLicenseAcceptance>
 
   <assemblyFile>VirtoCommerce.Sanity.Web.dll</assemblyFile>
