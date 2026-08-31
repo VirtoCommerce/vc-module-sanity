@@ -65,12 +65,22 @@ public static class ModuleConstants
                 DefaultValue = string.Empty,
             };
 
+            public static SettingDescriptor DocumentTypes { get; } = new()
+            {
+                Name = $"{GroupName}.DocumentTypes",
+                GroupName = $"CMS|{GroupName}",
+                ValueType = SettingValueType.ShortText,
+                DefaultValue = "page",
+            };
+
+            // Legacy single-type setting, superseded by DocumentTypes. Kept registered so existing store values are still readable.
             public static SettingDescriptor PageType { get; } = new()
             {
                 Name = $"{GroupName}.PageType",
                 GroupName = $"CMS|{GroupName}",
                 ValueType = SettingValueType.ShortText,
                 DefaultValue = "page",
+                IsHidden = true,
             };
         }
 
@@ -82,6 +92,7 @@ public static class ModuleConstants
                 yield return General.ProjectId;
                 yield return General.Dataset;
                 yield return General.ApiToken;
+                yield return General.DocumentTypes;
                 yield return General.PageType;
             }
         }
@@ -94,6 +105,7 @@ public static class ModuleConstants
                 yield return General.ProjectId;
                 yield return General.Dataset;
                 yield return General.ApiToken;
+                yield return General.DocumentTypes;
                 yield return General.PageType;
             }
         }

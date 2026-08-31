@@ -30,14 +30,14 @@ public class SanityContentProvider(
         var allChanges = new List<IndexDocumentChange>();
         var processedProjects = new HashSet<string>();
 
-        await ForEachStoreAsync(async (projectId, dataset, apiToken, pageType, _) =>
+        await ForEachStoreAsync(async (projectId, dataset, apiToken, documentTypes, _) =>
         {
-            if (!processedProjects.Add($"{projectId}:{dataset}:{pageType}"))
+            if (!processedProjects.Add($"{projectId}:{dataset}:{string.Join(",", documentTypes)}"))
             {
                 return;
             }
 
-            var query = BuildChangesQuery(pageType, criteria.StartDate, criteria.EndDate);
+            var query = BuildChangesQuery(documentTypes, criteria.StartDate, criteria.EndDate);
             var response = await apiClient.QueryAsync(projectId, dataset, apiToken, query);
 
             allChanges.AddRange(response.Results.Select(doc => new IndexDocumentChange
@@ -62,7 +62,7 @@ public class SanityContentProvider(
         var result = new List<PageDocument>();
         var processedIds = new HashSet<string>();
 
-        await ForEachStoreAsync(async (projectId, dataset, apiToken, pageType, storeId) =>
+        await ForEachStoreAsync(async (projectId, dataset, apiToken, documentTypes, storeId) =>
         {
             var remainingIds = ids.Where(id => !processedIds.Contains(id)).ToList();
             if (remainingIds.Count == 0)
@@ -71,7 +71,7 @@ public class SanityContentProvider(
             }
 
             var idsFilter = string.Join(", ", remainingIds.Select(id => $"\"{id}\""));
-            var query = $"*[_type == \"{pageType}\" && _id in [{idsFilter}]]";
+            var query = $"*[{BuildTypeFilter(documentTypes)} && _id in [{idsFilter}]]";
             var response = await apiClient.QueryAsync(projectId, dataset, apiToken, query);
 
             foreach (var doc in response.Results)
@@ -100,10 +100,21 @@ public class SanityContentProvider(
         return result;
     }
 
-    private static string BuildChangesQuery(string pageType, DateTime? startDate, DateTime? endDate)
+    private static string BuildChangesQuery(IList<string> documentTypes, DateTime? startDate, DateTime? endDate)
     {
         var dateFilter = BuildDateFilter(startDate, endDate);
-        return $"*[_type == \"{pageType}\"{dateFilter}]{{_id, _updatedAt}} | order(_updatedAt desc)";
+        return $"*[{BuildTypeFilter(documentTypes)}{dateFilter}]{{_id, _updatedAt}} | order(_updatedAt desc)";
+    }
+
+    private static string BuildTypeFilter(IList<string> documentTypes)
+    {
+        if (documentTypes.Count == 1)
+        {
+            return $"_type == \"{documentTypes[0]}\"";
+        }
+
+        var typesFilter = string.Join(", ", documentTypes.Select(type => $"\"{type}\""));
+        return $"_type in [{typesFilter}]";
     }
 
     private static string BuildDateFilter(DateTime? startDate, DateTime? endDate)
@@ -123,7 +134,7 @@ public class SanityContentProvider(
         return string.Concat(filters);
     }
 
-    private async Task ForEachStoreAsync(Func<string, string, string, string, string, Task> action)
+    private async Task ForEachStoreAsync(Func<string, string, string, string[], string, Task> action)
     {
         const int storeBatchSize = 50;
         var criteria = AbstractTypeFactory<StoreSearchCriteria>.TryCreateInstance();
@@ -146,7 +157,7 @@ public class SanityContentProvider(
         while (criteria.Skip < storeCount);
     }
 
-    private async Task TryProcessStoreAsync(string storeId, Func<string, string, string, string, string, Task> action)
+    private async Task TryProcessStoreAsync(string storeId, Func<string, string, string, string[], string, Task> action)
     {
         var settings = (await settingsManager.GetObjectSettingsAsync(
         [
@@ -154,6 +165,7 @@ public class SanityContentProvider(
             ModuleConstants.Settings.General.ProjectId.Name,
             ModuleConstants.Settings.General.Dataset.Name,
             ModuleConstants.Settings.General.ApiToken.Name,
+            ModuleConstants.Settings.General.DocumentTypes.Name,
             ModuleConstants.Settings.General.PageType.Name,
         ], "Store", storeId)).ToDictionary(x => x.Name, StringComparer.OrdinalIgnoreCase);
 
@@ -171,14 +183,32 @@ public class SanityContentProvider(
         }
 
         var dataset = GetSettingValue<string>(settings, ModuleConstants.Settings.General.Dataset.Name);
-        var pageType = GetSettingValue<string>(settings, ModuleConstants.Settings.General.PageType.Name);
+        var documentTypes = GetDocumentTypes(settings);
 
         await action(
             projectId,
             string.IsNullOrEmpty(dataset) ? "production" : dataset,
             apiToken,
-            string.IsNullOrEmpty(pageType) ? "page" : pageType,
+            documentTypes,
             storeId);
+    }
+
+    private static string[] GetDocumentTypes(Dictionary<string, ObjectSettingEntry> settings)
+    {
+        var documentTypes = GetSettingValue<string>(settings, ModuleConstants.Settings.General.DocumentTypes.Name);
+
+        // Fall back to the legacy single-type setting for stores configured before DocumentTypes was introduced
+        if (string.IsNullOrWhiteSpace(documentTypes))
+        {
+            documentTypes = GetSettingValue<string>(settings, ModuleConstants.Settings.General.PageType.Name);
+        }
+
+        var types = (documentTypes ?? string.Empty)
+            .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        return types.Length > 0 ? types : ["page"];
     }
 
     private static T GetSettingValue<T>(Dictionary<string, ObjectSettingEntry> settings, string name)

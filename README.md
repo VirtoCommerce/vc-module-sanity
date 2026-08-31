@@ -6,7 +6,7 @@ The Sanity module integrates [Sanity](https://www.sanity.io/) CMS with Virto Com
 
 ## Sanity Schema
 
-Create a document type in your [Sanity Studio](https://www.sanity.io/docs/sanity-studio-quickstart/setting-up-your-studio) project. The type name must match the `Sanity.PageType` store setting (default: `page`).
+Create one or more document types in your [Sanity Studio](https://www.sanity.io/docs/sanity-studio-quickstart/setting-up-your-studio) project. The type names must be listed in the `Sanity.DocumentTypes` store setting (comma-separated, default: `page`), e.g. `page,siteSettings,footerNavigation`.
 
 **`schemaTypes/pageType.ts`:**
 
@@ -80,7 +80,8 @@ The content provider uses the [Sanity Content API (GROQ)](https://www.sanity.io/
 | **Sanity.ProjectId** | Sanity project ID | — |
 | **Sanity.Dataset** | Dataset name | `production` |
 | **Sanity.ApiToken** | API token (read access) | — |
-| **Sanity.PageType** | Document type to index | `page` |
+| **Sanity.DocumentTypes** | Comma-separated list of document types to fetch and index | `page` |
+| **Sanity.PageType** | Legacy single document type; used only when **Sanity.DocumentTypes** is empty | `page` |
 
 ### References
 

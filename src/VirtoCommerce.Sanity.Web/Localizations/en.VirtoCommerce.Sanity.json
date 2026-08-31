@@ -31,9 +31,13 @@
         "title": "API Token",
         "description": "Sanity API token for Content API authentication"
       },
+      "DocumentTypes": {
+        "title": "Document Types",
+        "description": "Comma-separated list of Sanity document types to fetch and index (default: page). Example: page,siteSettings,footerNavigation"
+      },
       "PageType": {
-        "title": "Page Type",
-        "description": "Sanity document type to index as pages (default: page)"
+        "title": "Page Type (legacy)",
+        "description": "Legacy single Sanity document type to index as pages. Superseded by Document Types"
       }
     }
   }
