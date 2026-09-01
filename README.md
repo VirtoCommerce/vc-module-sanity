@@ -83,6 +83,30 @@ The content provider uses the [Sanity Content API (GROQ)](https://www.sanity.io/
 | **Sanity.DocumentTypes** | Comma-separated list of document types to fetch and index | `page` |
 | **Sanity.PageType** | Legacy single document type; used only when **Sanity.DocumentTypes** is empty | `page` |
 
+### Internal Link Resolution
+
+Sanity stores internal links as raw references (`{"_type": "reference", "_ref": "<document-id>"}`), which are useless for building URLs on the frontend. When the module fetches or receives a document, it automatically resolves such references: it collects all document references at any nesting depth, queries the relative link of each referenced document in a single batch request, and injects it into the reference object as a `slug` property.
+
+The relative link of a referenced document is resolved as:
+
+```groq
+coalesce(permalink.current, seo.slug.current, slug.current)
+```
+
+For example, a footer navigation link stored as:
+
+```json
+{ "link": { "label": "About", "internalLink": { "_type": "reference", "_ref": "page-about" } } }
+```
+
+is indexed as:
+
+```json
+{ "link": { "label": "About", "internalLink": { "_type": "reference", "_ref": "page-about", "slug": "about-us" } } }
+```
+
+Asset references (`image-*`, `file-*`) are skipped. References to documents without a permalink/slug are left untouched. Resolution applies when documents are fetched from the Sanity API (index rebuild and scheduled sync); webhook payloads are indexed as received.
+
 ### References
 
 * [Sanity Content API (GROQ)](https://www.sanity.io/docs/http-query)

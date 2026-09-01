@@ -2,13 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using Newtonsoft.Json.Linq;
 using VirtoCommerce.Pages.Core.ContentProviders;
 using VirtoCommerce.Pages.Core.Models;
 using VirtoCommerce.Platform.Core.Common;
 using VirtoCommerce.Platform.Core.Settings;
 using VirtoCommerce.Sanity.Core;
 using VirtoCommerce.Sanity.Core.Services;
+using VirtoCommerce.Sanity.Data.Services;
 using VirtoCommerce.SearchModule.Core.Model;
 using VirtoCommerce.StoreModule.Core.Model.Search;
 using VirtoCommerce.StoreModule.Core.Services;
@@ -18,6 +18,7 @@ namespace VirtoCommerce.Sanity.Data.ContentProviders;
 public class SanityContentProvider(
     ISanityApiClient apiClient,
     ISanityConverter sanityConverter,
+    SanityLinkResolver sanityLinkResolver,
     IStoreSearchService storeSearchService,
     ISettingsManager settingsManager)
     : IPageContentProvider
@@ -73,6 +74,8 @@ public class SanityContentProvider(
             var idsFilter = string.Join(", ", remainingIds.Select(id => $"\"{id}\""));
             var query = $"*[{BuildTypeFilter(documentTypes)} && _id in [{idsFilter}]]";
             var response = await apiClient.QueryAsync(projectId, dataset, apiToken, query);
+
+            await sanityLinkResolver.ResolveLinksAsync(projectId, dataset, apiToken, response.Results);
 
             foreach (var doc in response.Results)
             {

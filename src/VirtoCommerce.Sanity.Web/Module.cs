@@ -21,6 +21,7 @@ public class Module : IModule
         serviceCollection.AddHttpClient("Sanity");
         serviceCollection.AddTransient<ISanityConverter, SanityConverter>();
         serviceCollection.AddTransient<ISanityApiClient, SanityApiClient>();
+        serviceCollection.AddTransient<SanityLinkResolver>();
         serviceCollection.AddTransient<IPageContentProvider, SanityContentProvider>();
     }
 
