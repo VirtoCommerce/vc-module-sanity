@@ -29,7 +29,7 @@
       },
       "ApiToken": {
         "title": "API Token",
-        "description": "Sanity API token for Content API authentication"
+        "description": "Sanity API token for Content API authentication; also the default token for projects without their own token in the Projects setting"
       },
       "DocumentTypes": {
         "title": "Document Types",
@@ -38,6 +38,10 @@
       "PageType": {
         "title": "Page Type (legacy)",
         "description": "Legacy single Sanity document type to index as pages. Superseded by Document Types"
+      },
+      "Projects": {
+        "title": "Projects",
+        "description": "JSON array describing all Sanity sources of the store. Entry fields: projectId (required), apiToken (optional, falls back to the API Token setting), datasets — a map of dataset name to its document types as a comma-separated string or an array (empty inherits the Document Types setting), dataset — single dataset name used when datasets is omitted (default: production), priorityDataset — the dataset that wins when the same document exists in several datasets (conflicts are logged). When empty, the single project from the Project ID, Dataset, and Document Types settings is used. Example: [ { \"projectId\": \"abc12345\", \"apiToken\": \"sk...\", \"datasets\": { \"production\": \"page,footerNavigation\", \"marketing\": [\"landing\", \"blog\"] }, \"priorityDataset\": \"production\" }, { \"projectId\": \"xyz67890\", \"datasets\": { \"content\": \"landing\" } } ]"
       }
     }
   }

@@ -53,7 +53,7 @@ public class SanityLinkResolverTests
     }
 
     [Fact]
-    public async Task ResolveLinksAsync_SkipsAssetReferences()
+    public async Task ResolveLinksAsync_AddsCdnUrlToAssetReferencesWithoutQueryingApi()
     {
         var apiClient = new FakeSanityApiClient();
         var resolver = new SanityLinkResolver(apiClient);
@@ -69,6 +69,65 @@ public class SanityLinkResolverTests
 
         await resolver.ResolveLinksAsync("project", "production", "token", [document]);
 
+        Assert.Equal(
+            "https://cdn.sanity.io/images/project/production/abc123-800x600.jpg",
+            document.SelectToken("image.asset.url")?.ToString());
+        Assert.Equal(
+            "https://cdn.sanity.io/files/project/production/def456.pdf",
+            document.SelectToken("attachment.asset.url")?.ToString());
+
+        // Asset URLs are built from the asset id; the Sanity API must not be queried
+        Assert.Empty(apiClient.Queries);
+    }
+
+    [Fact]
+    public async Task ResolveLinksAsync_MixedReferences_ResolvesSlugsAndAssetUrlsIndependently()
+    {
+        var apiClient = new FakeSanityApiClient
+        {
+            Results = [JObject.Parse("""{"_id": "page-about", "slug": "about-us"}""")],
+        };
+        var resolver = new SanityLinkResolver(apiClient);
+
+        var document = JObject.Parse("""
+        {
+            "_id": "footer",
+            "_type": "footerNavigation",
+            "link": { "internalLink": { "_type": "reference", "_ref": "page-about" } },
+            "logo": { "asset": { "_type": "reference", "_ref": "image-fff000-100x50-svg" } }
+        }
+        """);
+
+        await resolver.ResolveLinksAsync("project", "production", "token", [document]);
+
+        Assert.Equal("about-us", document.SelectToken("link.internalLink.slug")?.ToString());
+        Assert.Equal(
+            "https://cdn.sanity.io/images/project/production/fff000-100x50.svg",
+            document.SelectToken("logo.asset.url")?.ToString());
+
+        // The single API query is for the document slug; the asset id must not leak into it
+        var query = Assert.Single(apiClient.Queries);
+        Assert.Contains("\"page-about\"", query);
+        Assert.DoesNotContain("image-fff000", query);
+    }
+
+    [Fact]
+    public async Task ResolveLinksAsync_MalformedAssetId_LeavesReferenceUntouched()
+    {
+        var apiClient = new FakeSanityApiClient();
+        var resolver = new SanityLinkResolver(apiClient);
+
+        var document = JObject.Parse("""
+        {
+            "_id": "page-1",
+            "_type": "page",
+            "image": { "asset": { "_type": "reference", "_ref": "image-noformat" } }
+        }
+        """);
+
+        await resolver.ResolveLinksAsync("project", "production", "token", [document]);
+
+        Assert.Null(document.SelectToken("image.asset.url"));
         Assert.Empty(apiClient.Queries);
     }
 

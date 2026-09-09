@@ -9,7 +9,8 @@ namespace VirtoCommerce.Sanity.Data.Services;
 
 /// <summary>
 /// Enriches Sanity documents in place: every internal document reference gets a "slug" property
-/// with the relative link (permalink) of the referenced document.
+/// with the relative link (permalink) of the referenced document, and every asset reference
+/// (image or file) gets a "url" property with its CDN URL.
 /// </summary>
 public class SanityLinkResolver(ISanityApiClient apiClient)
 {
@@ -17,10 +18,52 @@ public class SanityLinkResolver(ISanityApiClient apiClient)
     private const int ReferenceBatchSize = 100;
     private const string SlugPropertyName = "slug";
     private const string SlugProjection = "coalesce(permalink.current, seo.slug.current, slug.current)";
+    private const string UrlPropertyName = "url";
+    private const string AssetCdnBaseUrl = "https://cdn.sanity.io";
+    private const string ImageAssetPrefix = "image-";
+    private const string FileAssetPrefix = "file-";
 
     public virtual async Task ResolveLinksAsync(string projectId, string dataset, string apiToken, IList<JObject> documents)
     {
-        var references = documents.SelectMany(CollectDocumentReferences).ToList();
+        var references = documents.SelectMany(CollectReferences).ToList();
+
+        ResolveAssetUrls(projectId, dataset, references.Where(IsAssetReference));
+
+        await ResolveDocumentSlugsAsync(projectId, dataset, apiToken, references.Where(x => !IsAssetReference(x)).ToList());
+    }
+
+    protected virtual void ResolveAssetUrls(string projectId, string dataset, IEnumerable<JObject> assetReferences)
+    {
+        foreach (var reference in assetReferences)
+        {
+            var url = BuildAssetUrl(projectId, dataset, GetReferencedId(reference));
+            if (url != null)
+            {
+                reference[UrlPropertyName] = url;
+            }
+        }
+    }
+
+    // Sanity asset ids encode everything needed for the CDN URL, so no API request is required:
+    // image-<hash>-<width>x<height>-<format> -> https://cdn.sanity.io/images/<projectId>/<dataset>/<hash>-<width>x<height>.<format>
+    // file-<hash>-<extension>                -> https://cdn.sanity.io/files/<projectId>/<dataset>/<hash>.<extension>
+    private static string BuildAssetUrl(string projectId, string dataset, string assetId)
+    {
+        var kind = assetId.StartsWith(ImageAssetPrefix, StringComparison.Ordinal) ? "images" : "files";
+        var name = assetId[(assetId.IndexOf('-') + 1)..];
+
+        var extensionSeparator = name.LastIndexOf('-');
+        if (extensionSeparator <= 0 || extensionSeparator == name.Length - 1)
+        {
+            // Malformed asset id without a format suffix; leave the reference untouched
+            return null;
+        }
+
+        return $"{AssetCdnBaseUrl}/{kind}/{projectId}/{dataset}/{name[..extensionSeparator]}.{name[(extensionSeparator + 1)..]}";
+    }
+
+    protected virtual async Task ResolveDocumentSlugsAsync(string projectId, string dataset, string apiToken, IList<JObject> references)
+    {
         if (references.Count == 0)
         {
             return;
@@ -68,27 +111,26 @@ public class SanityLinkResolver(ISanityApiClient apiClient)
         return slugsByDocumentId;
     }
 
-    private static IEnumerable<JObject> CollectDocumentReferences(JObject document)
+    private static IEnumerable<JObject> CollectReferences(JObject document)
     {
         return document
             .DescendantsAndSelf()
             .OfType<JObject>()
-            .Where(IsDocumentReference);
+            .Where(IsReference);
     }
 
-    private static bool IsDocumentReference(JObject candidate)
+    private static bool IsReference(JObject candidate)
     {
-        if (candidate["_type"]?.ToString() != "reference")
-        {
-            return false;
-        }
+        return candidate["_type"]?.ToString() == "reference" &&
+               !string.IsNullOrEmpty(GetReferencedId(candidate));
+    }
 
-        var referencedId = GetReferencedId(candidate);
+    private static bool IsAssetReference(JObject reference)
+    {
+        var referencedId = GetReferencedId(reference);
 
-        // Asset references (images, files) have no documents with permalinks behind them
-        return !string.IsNullOrEmpty(referencedId) &&
-               !referencedId.StartsWith("image-", StringComparison.Ordinal) &&
-               !referencedId.StartsWith("file-", StringComparison.Ordinal);
+        return referencedId.StartsWith(ImageAssetPrefix, StringComparison.Ordinal) ||
+               referencedId.StartsWith(FileAssetPrefix, StringComparison.Ordinal);
     }
 
     private static string GetReferencedId(JObject reference)

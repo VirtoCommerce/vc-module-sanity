@@ -6,7 +6,7 @@ The Sanity module integrates [Sanity](https://www.sanity.io/) CMS with Virto Com
 
 ## Sanity Schema
 
-Create one or more document types in your [Sanity Studio](https://www.sanity.io/docs/sanity-studio-quickstart/setting-up-your-studio) project. The type names must be listed in the `Sanity.DocumentTypes` store setting (comma-separated, default: `page`), e.g. `page,siteSettings,footerNavigation`.
+Create one or more document types in your [Sanity Studio](https://www.sanity.io/docs/sanity-studio-quickstart/setting-up-your-studio) project. The type names must be listed per dataset in the `Sanity.Projects` store setting (see [Multiple Projects and Datasets](#multiple-projects-and-datasets)) or in the `Sanity.DocumentTypes` setting (comma-separated, default: `page`), e.g. `page,siteSettings,footerNavigation`.
 
 **`schemaTypes/pageType.ts`:**
 
@@ -79,9 +79,50 @@ The content provider uses the [Sanity Content API (GROQ)](https://www.sanity.io/
 | **Sanity.Enabled** | Enable/disable Sanity for the store | `false` |
 | **Sanity.ProjectId** | Sanity project ID | — |
 | **Sanity.Dataset** | Dataset name | `production` |
-| **Sanity.ApiToken** | API token (read access) | — |
+| **Sanity.ApiToken** | API token (read access); also the default token for projects that carry no `apiToken` of their own in **Sanity.Projects** | — |
 | **Sanity.DocumentTypes** | Comma-separated list of document types to fetch and index | `page` |
+| **Sanity.Projects** | Single JSON setting describing all Sanity sources of the store: projects, their datasets, document types, and priority (see below) | `[]` |
 | **Sanity.PageType** | Legacy single document type; used only when **Sanity.DocumentTypes** is empty | `page` |
+
+### Multiple Projects and Datasets
+
+A store can fetch and index documents from several datasets and several Sanity projects at once. All sources are described by the single **Sanity.Projects** setting — a JSON array where each entry is a project with its own credentials and datasets, and each dataset has its own document types:
+
+```json
+[
+  {
+    "projectId": "abc12345",
+    "apiToken": "sk...",
+    "datasets": {
+      "production": "page,footerNavigation",
+      "marketing": ["landing", "blog"]
+    },
+    "priorityDataset": "production"
+  },
+  {
+    "projectId": "xyz67890",
+    "datasets": { "content": "landing,blog" }
+  }
+]
+```
+
+Entry fields:
+
+| Field | Required | Description |
+|---|---|---|
+| `projectId` | yes | Sanity project ID; entries without it are skipped with a warning |
+| `apiToken` | no | Project API token; falls back to the **Sanity.ApiToken** setting |
+| `datasets` | no | JSON object mapping a dataset name to its document types — a comma-separated string or a JSON array; a dataset with an empty type list inherits the **Sanity.DocumentTypes** setting |
+| `dataset` | no | Single dataset name (default `production`), used only when `datasets` is omitted |
+| `priorityDataset` | no | Name of the dataset that wins when the same document exists in several datasets of this project |
+
+When **Sanity.Projects** is empty, the module works with the single project from **Sanity.ProjectId**, **Sanity.Dataset**, and **Sanity.DocumentTypes** — existing configurations keep working unchanged.
+
+**Conflicts.** The same document id may exist in several sources (e.g. cloned datasets or projects). Sources are processed in priority order: projects in their configured order, and within a project the dataset named in `priorityDataset` first, the rest in their configured order. On a conflict, the document from the higher-priority source is indexed, and a warning is always written to the platform log:
+
+```
+Sanity conflict in store 'B2B-store': document 'page-about' exists in project 'abc12345' dataset 'production' and in project 'abc12345' dataset 'draft'. The document from the higher-priority source wins.
+```
 
 ### Internal Link Resolution
 
@@ -105,7 +146,30 @@ is indexed as:
 { "link": { "label": "About", "internalLink": { "_type": "reference", "_ref": "page-about", "slug": "about-us" } } }
 ```
 
-Asset references (`image-*`, `file-*`) are skipped. References to documents without a permalink/slug are left untouched. Resolution applies when documents are fetched from the Sanity API (index rebuild and scheduled sync); webhook payloads are indexed as received.
+References to documents without a permalink/slug are left untouched. Resolution applies when documents are fetched from the Sanity API (index rebuild and scheduled sync); webhook payloads are indexed as received.
+
+### Asset URL Resolution
+
+Image and file references get the same treatment: every asset reference is enriched with a `url` property pointing to the Sanity CDN. Asset ids encode everything needed for the URL, so no extra API request is made:
+
+| Asset id | Injected `url` |
+|---|---|
+| `image-<hash>-<width>x<height>-<format>` | `https://cdn.sanity.io/images/<projectId>/<dataset>/<hash>-<width>x<height>.<format>` |
+| `file-<hash>-<extension>` | `https://cdn.sanity.io/files/<projectId>/<dataset>/<hash>.<extension>` |
+
+For example, an image stored as:
+
+```json
+{ "logo": { "_type": "image", "asset": { "_type": "reference", "_ref": "image-abc123-800x600-jpg" } } }
+```
+
+is indexed as:
+
+```json
+{ "logo": { "_type": "image", "asset": { "_type": "reference", "_ref": "image-abc123-800x600-jpg", "url": "https://cdn.sanity.io/images/<projectId>/<dataset>/abc123-800x600.jpg" } } }
+```
+
+which matches the shape a GROQ `asset->{url}` dereference would produce (`logo.asset.url`). Malformed asset ids are left untouched.
 
 ### References
 
