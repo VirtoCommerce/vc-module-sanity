@@ -34,7 +34,13 @@ public class SanityContentProviderTests
         var provider = CreateProvider(apiClient, logger, new Dictionary<string, object>
         {
             [ModuleConstants.Settings.General.Projects.Name] = """
-            [{ "projectId": "project1", "datasets": { "draft": "page", "production": "page" }, "priorityDataset": "production" }]
+            [{
+                "projectId": "project1",
+                "datasets": [
+                    { "name": "draft", "documentTypes": ["page"] },
+                    { "name": "production", "documentTypes": ["page"], "isPriority": true }
+                ]
+            }]
             """,
         });
 
@@ -43,7 +49,7 @@ public class SanityContentProviderTests
         var pageDocument = Assert.Single(result);
         Assert.Equal("Production title", pageDocument.Title);
 
-        // "production" is configured second but must be queried first as the priority dataset
+        // "production" is configured second but must be queried first because of the isPriority flag
         Assert.Equal(["production", "draft"], apiClient.Requests.Select(x => x.Dataset).ToArray());
 
         var conflict = Assert.Single(logger.Entries, x => x.Level == LogLevel.Warning);
@@ -63,7 +69,13 @@ public class SanityContentProviderTests
         var provider = CreateProvider(apiClient, logger, new Dictionary<string, object>
         {
             [ModuleConstants.Settings.General.Projects.Name] = """
-            [{ "projectId": "project1", "datasets": { "production": "page", "marketing": "landing" } }]
+            [{
+                "projectId": "project1",
+                "datasets": [
+                    { "name": "production", "documentTypes": ["page"] },
+                    { "name": "marketing", "documentTypes": ["landing"] }
+                ]
+            }]
             """,
         });
 
@@ -80,7 +92,13 @@ public class SanityContentProviderTests
         var provider = CreateProvider(apiClient, new InMemoryLogger(), new Dictionary<string, object>
         {
             [ModuleConstants.Settings.General.Projects.Name] = """
-            [{ "projectId": "project1", "datasets": { "production": "page", "marketing": ["landing", "blog"] } }]
+            [{
+                "projectId": "project1",
+                "datasets": [
+                    { "name": "production", "documentTypes": ["page"] },
+                    { "name": "marketing", "documentTypes": ["landing", "blog"] }
+                ]
+            }]
             """,
         });
 
@@ -132,6 +150,24 @@ public class SanityContentProviderTests
     }
 
     [Fact]
+    public async Task GetByIdsAsync_DatasetWithoutDocumentTypes_InheritsDocumentTypesSetting()
+    {
+        var apiClient = new FakeSanityApiClient();
+        var provider = CreateProvider(apiClient, new InMemoryLogger(), new Dictionary<string, object>
+        {
+            [ModuleConstants.Settings.General.DocumentTypes.Name] = "page,footerNavigation",
+            [ModuleConstants.Settings.General.Projects.Name] = """
+            [{ "projectId": "projA", "datasets": [{ "name": "production" }] }]
+            """,
+        });
+
+        await provider.GetByIdsAsync(["page-1"]);
+
+        var request = Assert.Single(apiClient.Requests);
+        Assert.Contains("_type in [\"page\", \"footerNavigation\"]", request.Query);
+    }
+
+    [Fact]
     public async Task GetByIdsAsync_MultipleProjects_EachProjectQueriedWithOwnCredentialsAndTypes()
     {
         var apiClient = new FakeSanityApiClient();
@@ -142,8 +178,8 @@ public class SanityContentProviderTests
         {
             [ModuleConstants.Settings.General.Projects.Name] = """
             [
-                { "projectId": "projA", "apiToken": "tokenA", "datasets": { "production": "page" } },
-                { "projectId": "projB", "datasets": { "content": "landing" } }
+                { "projectId": "projA", "apiToken": "tokenA", "datasets": [{ "name": "production", "documentTypes": ["page"] }] },
+                { "projectId": "projB", "datasets": [{ "name": "content", "documentTypes": ["landing"] }] }
             ]
             """,
         });
@@ -176,8 +212,8 @@ public class SanityContentProviderTests
         {
             [ModuleConstants.Settings.General.Projects.Name] = """
             [
-                { "projectId": "projA", "apiToken": "tokenA", "datasets": { "production": "page" } },
-                { "projectId": "projB", "apiToken": "tokenB", "datasets": { "production": "page" } }
+                { "projectId": "projA", "apiToken": "tokenA", "datasets": [{ "name": "production", "documentTypes": ["page"] }] },
+                { "projectId": "projB", "apiToken": "tokenB", "datasets": [{ "name": "production", "documentTypes": ["page"] }] }
             ]
             """,
         });
@@ -204,8 +240,8 @@ public class SanityContentProviderTests
         {
             [ModuleConstants.Settings.General.Projects.Name] = """
             [
-                { "apiToken": "tokenX", "datasets": { "production": "page" } },
-                { "projectId": "projA", "datasets": { "production": "page" } }
+                { "apiToken": "tokenX", "datasets": [{ "name": "production", "documentTypes": ["page"] }] },
+                { "projectId": "projA", "datasets": [{ "name": "production", "documentTypes": ["page"] }] }
             ]
             """,
         });
@@ -234,7 +270,13 @@ public class SanityContentProviderTests
         var provider = CreateProvider(apiClient, new InMemoryLogger(), new Dictionary<string, object>
         {
             [ModuleConstants.Settings.General.Projects.Name] = """
-            [{ "projectId": "project1", "datasets": { "draft": "page", "production": "page" }, "priorityDataset": "production" }]
+            [{
+                "projectId": "project1",
+                "datasets": [
+                    { "name": "draft", "documentTypes": ["page"] },
+                    { "name": "production", "documentTypes": ["page"], "isPriority": true }
+                ]
+            }]
             """,
         });
 

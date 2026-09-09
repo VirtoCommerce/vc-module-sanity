@@ -10,6 +10,7 @@ using VirtoCommerce.Pages.Core.Models;
 using VirtoCommerce.Platform.Core.Common;
 using VirtoCommerce.Platform.Core.Settings;
 using VirtoCommerce.Sanity.Core;
+using VirtoCommerce.Sanity.Core.Models;
 using VirtoCommerce.Sanity.Core.Services;
 using VirtoCommerce.Sanity.Data.Services;
 using VirtoCommerce.SearchModule.Core.Model;
@@ -30,11 +31,7 @@ public class SanityContentProvider(
     public string ProviderName => "Sanity";
     public bool SupportsReindexation => true;
 
-    // A store is served by one or more projects, each with one or more datasets.
-    // Projects are ordered as configured and datasets so the priority dataset comes first;
-    // on conflicts the document from the first source that returned it wins.
-    private sealed record SanityDataset(string Name, string[] DocumentTypes);
-    private sealed record SanityProject(string ProjectId, string ApiToken, IList<SanityDataset> Datasets);
+    private const string DefaultDatasetName = "production";
 
     public async Task<PageChangesSearchResult> SearchChangesAsync(PageChangesSearchCriteria criteria)
     {
@@ -274,16 +271,17 @@ public class SanityContentProvider(
         {
             try
             {
-                foreach (var item in JArray.Parse(rawProjects).OfType<JObject>())
+                var configuredProjects = JsonConvert.DeserializeObject<List<SanityProject>>(rawProjects) ?? [];
+
+                foreach (var project in configuredProjects)
                 {
-                    var project = CreateProject(item, settings, storeId, defaultApiToken);
-                    if (project != null)
+                    if (TryPrepareProject(project, settings, storeId, defaultApiToken))
                     {
                         projects.Add(project);
                     }
                 }
             }
-            catch (JsonReaderException ex)
+            catch (JsonException ex)
             {
                 logger.LogWarning(ex,
                     "Store '{StoreId}': the '{SettingName}' setting contains invalid JSON. Falling back to the single project from the '{ProjectIdSettingName}' setting.",
@@ -299,78 +297,68 @@ public class SanityContentProvider(
             if (!string.IsNullOrEmpty(projectId) && !string.IsNullOrEmpty(defaultApiToken))
             {
                 var dataset = GetSettingValue<string>(settings, ModuleConstants.Settings.General.Dataset.Name);
-                projects.Add(new SanityProject(
-                    projectId,
-                    defaultApiToken,
-                    [new SanityDataset(string.IsNullOrEmpty(dataset) ? "production" : dataset, GetDocumentTypes(settings))]));
+                projects.Add(new SanityProject
+                {
+                    ProjectId = projectId,
+                    ApiToken = defaultApiToken,
+                    Datasets =
+                    [
+                        new SanityDataset
+                        {
+                            Name = string.IsNullOrEmpty(dataset) ? DefaultDatasetName : dataset,
+                            DocumentTypes = GetDocumentTypes(settings),
+                        },
+                    ],
+                });
             }
         }
 
         return projects;
     }
 
-    private SanityProject CreateProject(JObject item, Dictionary<string, ObjectSettingEntry> settings, string storeId, string defaultApiToken)
+    // Validates a deserialized project and normalizes it for querying: fills the default API token,
+    // drops nameless datasets, fills inherited document types, and orders datasets so the ones
+    // marked as priority come first
+    private bool TryPrepareProject(SanityProject project, Dictionary<string, ObjectSettingEntry> settings, string storeId, string defaultApiToken)
     {
-        var projectId = item["projectId"]?.ToString();
-
-        var apiToken = item["apiToken"]?.ToString();
-        if (string.IsNullOrEmpty(apiToken))
+        if (string.IsNullOrEmpty(project.ApiToken))
         {
-            apiToken = defaultApiToken;
+            project.ApiToken = defaultApiToken;
         }
 
-        if (string.IsNullOrEmpty(projectId) || string.IsNullOrEmpty(apiToken))
+        if (string.IsNullOrEmpty(project.ProjectId) || string.IsNullOrEmpty(project.ApiToken))
         {
             logger.LogWarning(
                 "Store '{StoreId}': an entry in the '{SettingName}' setting is skipped because it has no project id or no API token.",
                 storeId, ModuleConstants.Settings.General.Projects.Name);
-            return null;
+            return false;
         }
 
-        var datasets = ParseDatasets(item["datasets"] as JObject, GetDocumentTypes(settings));
+        var datasets = (project.Datasets ?? [])
+            .Where(x => !string.IsNullOrEmpty(x?.Name))
+            // Stable sort: datasets marked as priority go first, the rest keep their configured order
+            .OrderByDescending(x => x.IsPriority)
+            .ToList();
+
         if (datasets.Count == 0)
         {
-            var dataset = item["dataset"]?.ToString();
-            datasets.Add(new SanityDataset(
-                string.IsNullOrEmpty(dataset) ? "production" : dataset,
-                GetDocumentTypes(settings)));
+            datasets.Add(new SanityDataset { Name = DefaultDatasetName });
         }
 
-        var priorityDataset = item["priorityDataset"]?.ToString();
-
-        return new SanityProject(projectId, apiToken, OrderByPriority(datasets, priorityDataset));
-    }
-
-    private static List<SanityDataset> ParseDatasets(JObject datasetsJson, string[] fallbackDocumentTypes)
-    {
-        var datasets = new List<SanityDataset>();
-
-        if (datasetsJson == null)
+        // A dataset without its own types inherits the store-wide DocumentTypes setting
+        foreach (var dataset in datasets)
         {
-            return datasets;
+            dataset.DocumentTypes = NormalizeDocumentTypes(dataset.DocumentTypes ?? []);
+
+            if (dataset.DocumentTypes.Length == 0)
+            {
+                dataset.DocumentTypes = GetDocumentTypes(settings);
+            }
         }
 
-        foreach (var property in datasetsJson.Properties())
-        {
-            var documentTypes = property.Value is JArray array
-                ? NormalizeDocumentTypes(array.Select(x => x.ToString()))
-                : SplitDocumentTypes(property.Value?.ToString());
+        project.Datasets = datasets;
 
-            // A dataset without its own types inherits the store-wide DocumentTypes setting
-            datasets.Add(new SanityDataset(
-                property.Name,
-                documentTypes.Length > 0 ? documentTypes : fallbackDocumentTypes));
-        }
-
-        return datasets;
-    }
-
-    private static List<SanityDataset> OrderByPriority(List<SanityDataset> datasets, string priorityDataset)
-    {
-        // Stable sort: the priority dataset goes first, the rest keep their configured order
-        return string.IsNullOrEmpty(priorityDataset)
-            ? datasets
-            : datasets.OrderByDescending(x => x.Name.EqualsIgnoreCase(priorityDataset)).ToList();
+        return true;
     }
 
     private static string[] GetDocumentTypes(Dictionary<string, ObjectSettingEntry> settings)
@@ -383,13 +371,8 @@ public class SanityContentProvider(
             documentTypes = GetSettingValue<string>(settings, ModuleConstants.Settings.General.PageType.Name);
         }
 
-        var types = SplitDocumentTypes(documentTypes);
+        var types = NormalizeDocumentTypes((documentTypes ?? string.Empty).Split([',', ';'], StringSplitOptions.RemoveEmptyEntries));
         return types.Length > 0 ? types : ["page"];
-    }
-
-    private static string[] SplitDocumentTypes(string documentTypes)
-    {
-        return NormalizeDocumentTypes((documentTypes ?? string.Empty).Split([',', ';'], StringSplitOptions.RemoveEmptyEntries));
     }
 
     private static string[] NormalizeDocumentTypes(IEnumerable<string> documentTypes)

@@ -93,32 +93,39 @@ A store can fetch and index documents from several datasets and several Sanity p
   {
     "projectId": "abc12345",
     "apiToken": "sk...",
-    "datasets": {
-      "production": "page,footerNavigation",
-      "marketing": ["landing", "blog"]
-    },
-    "priorityDataset": "production"
+    "datasets": [
+      { "name": "production", "documentTypes": ["page", "footerNavigation"], "isPriority": true },
+      { "name": "marketing", "documentTypes": ["landing", "blog"] }
+    ]
   },
   {
     "projectId": "xyz67890",
-    "datasets": { "content": "landing,blog" }
+    "datasets": [
+      { "name": "content", "documentTypes": ["landing", "blog"] }
+    ]
   }
 ]
 ```
 
-Entry fields:
+Project fields:
 
 | Field | Required | Description |
 |---|---|---|
 | `projectId` | yes | Sanity project ID; entries without it are skipped with a warning |
 | `apiToken` | no | Project API token; falls back to the **Sanity.ApiToken** setting |
-| `datasets` | no | JSON object mapping a dataset name to its document types — a comma-separated string or a JSON array; a dataset with an empty type list inherits the **Sanity.DocumentTypes** setting |
-| `dataset` | no | Single dataset name (default `production`), used only when `datasets` is omitted |
-| `priorityDataset` | no | Name of the dataset that wins when the same document exists in several datasets of this project |
+| `datasets` | no | Array of the project's datasets; when omitted, the single `production` dataset is used |
+
+Dataset fields:
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | yes | Dataset name; entries without it are skipped |
+| `documentTypes` | no | Array of document types fetched from this dataset; when empty, inherits the **Sanity.DocumentTypes** setting |
+| `isPriority` | no | Marks the dataset as the priority one: it is queried first, so its documents win on conflicts. Default: `false` |
 
 When **Sanity.Projects** is empty, the module works with the single project from **Sanity.ProjectId**, **Sanity.Dataset**, and **Sanity.DocumentTypes** — existing configurations keep working unchanged.
 
-**Conflicts.** The same document id may exist in several sources (e.g. cloned datasets or projects). Sources are processed in priority order: projects in their configured order, and within a project the dataset named in `priorityDataset` first, the rest in their configured order. On a conflict, the document from the higher-priority source is indexed, and a warning is always written to the platform log:
+**Conflicts.** The same document id may exist in several sources (e.g. cloned datasets or projects). Sources are processed in priority order: projects in their configured order, and within a project the datasets marked with `isPriority` first, the rest in their configured order. On a conflict, the document from the higher-priority source is indexed, and a warning is always written to the platform log:
 
 ```
 Sanity conflict in store 'B2B-store': document 'page-about' exists in project 'abc12345' dataset 'production' and in project 'abc12345' dataset 'draft'. The document from the higher-priority source wins.

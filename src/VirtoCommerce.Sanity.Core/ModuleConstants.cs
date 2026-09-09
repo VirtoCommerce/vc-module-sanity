@@ -78,10 +78,11 @@ public static class ModuleConstants
             };
 
             // The single JSON setting describing all Sanity sources of the store: an array of projects, each with its own
-            // credentials, datasets and document types, e.g.
-            // [{"projectId": "abc", "apiToken": "sk...", "datasets": {"production": "page,footerNavigation"}, "priorityDataset": "production"}].
-            // The "apiToken" entry field is optional and inherits the ApiToken setting. "priorityDataset" names the dataset
-            // that wins when the same document exists in several datasets of the project; conflicts are always logged.
+            // credentials and datasets, deserialized directly into SanityProject models, e.g.
+            // [{"projectId": "abc", "apiToken": "sk...", "datasets": [{"name": "production", "documentTypes": ["page"], "isPriority": true}]}].
+            // The "apiToken" entry field is optional and inherits the ApiToken setting. A dataset marked with "isPriority"
+            // is queried first, so its documents win when the same document exists in several datasets;
+            // conflicts are always logged.
             // When empty, the module works with the single project from the ProjectId, Dataset and DocumentTypes settings.
             // Not public because entries may carry API tokens.
             public static SettingDescriptor Projects { get; } = new()
