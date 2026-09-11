@@ -6,7 +6,7 @@ The Sanity module integrates [Sanity](https://www.sanity.io/) CMS with Virto Com
 
 ## Sanity Schema
 
-Create a document type in your [Sanity Studio](https://www.sanity.io/docs/sanity-studio-quickstart/setting-up-your-studio) project. The type name must match the `Sanity.PageType` store setting (default: `page`).
+Create one or more document types in your [Sanity Studio](https://www.sanity.io/docs/sanity-studio-quickstart/setting-up-your-studio) project. The type names must be listed per dataset in the `Sanity.Projects` store setting (see [Multiple Projects and Datasets](#multiple-projects-and-datasets)) or in the `Sanity.DocumentTypes` setting (comma-separated, default: `page`), e.g. `page,siteSettings,footerNavigation`.
 
 **`schemaTypes/pageType.ts`:**
 
@@ -53,8 +53,8 @@ The following table shows how Sanity document fields map to VirtoCommerce `PageD
 | `permalink` | slug | `Permalink` | yes | Read from `permalink.current` |
 | `description` | text | `Description` | no | Meta description |
 | `body` | block[] | — | no | Stored as raw JSON in `Content` |
-| `storeId` | string | `StoreId` | recommended | Required for index rebuild. Fallback: webhook query param |
-| `cultureName` | string | `CultureName` | recommended | Required for index rebuild. Fallback: webhook query param |
+| `storeId` | string | `StoreId` | no | Overrides the store the document was found in; otherwise the store whose Sanity sources contain it |
+| `cultureName` | string | `CultureName` | recommended | Fallback: webhook query param |
 | `visibility` | string | `Visibility` | no | `Public` or `Private`. Default: `Private` |
 | `userGroups` | string[] | `UserGroups` | no | Restrict access to specific user groups |
 | `startDate` | datetime | `StartDate` | no | Scheduled publishing start |
@@ -70,7 +70,9 @@ The module integrates with [Virto Pages](https://github.com/VirtoCommerce/vc-mod
 
 * **Index Rebuild** — full reindex of all Sanity pages from the admin UI
 * **Scheduled Sync** — periodic synchronization of modified pages using `_updatedAt` filter
-* **Webhook Push** — real-time page updates via `POST /api/pages/sanity` (existing functionality)
+* **Webhook Push** — real-time page updates via `POST /api/pages/sanity`
+
+All three paths fetch the document from the Sanity API and enrich it the same way, so indexed content is identical regardless of what triggered the update.
 
 The content provider uses the [Sanity Content API (GROQ)](https://www.sanity.io/docs/http-query) to query pages. Configure the following store-level settings:
 
@@ -79,11 +81,108 @@ The content provider uses the [Sanity Content API (GROQ)](https://www.sanity.io/
 | **Sanity.Enabled** | Enable/disable Sanity for the store | `false` |
 | **Sanity.ProjectId** | Sanity project ID | — |
 | **Sanity.Dataset** | Dataset name | `production` |
-| **Sanity.ApiToken** | API token (read access) | — |
-| **Sanity.PageType** | Document type to index | `page` |
+| **Sanity.ApiToken** | API token (read access); also the default token for projects that carry no `apiToken` of their own in **Sanity.Projects** | — |
+| **Sanity.DocumentTypes** | Comma-separated list of document types to fetch and index | `page` |
+| **Sanity.Projects** | Single JSON setting describing all Sanity sources of the store: projects, their datasets, document types, and priority (see below) | `[]` |
+| **Sanity.PageType** | Legacy single document type; used only when **Sanity.DocumentTypes** is empty | `page` |
+
+### Multiple Projects and Datasets
+
+A store can fetch and index documents from several datasets and several Sanity projects at once. All sources are described by the single **Sanity.Projects** setting — a JSON array where each entry is a project with its own credentials and datasets, and each dataset has its own document types:
+
+```json
+[
+  {
+    "projectId": "abc12345",
+    "apiToken": "sk...",
+    "datasets": [
+      { "name": "production", "documentTypes": ["page", "footerNavigation"], "isPriority": true },
+      { "name": "marketing", "documentTypes": ["landing", "blog"] }
+    ]
+  },
+  {
+    "projectId": "xyz67890",
+    "datasets": [
+      { "name": "content", "documentTypes": ["landing", "blog"] }
+    ]
+  }
+]
+```
+
+Project fields:
+
+| Field | Required | Description |
+|---|---|---|
+| `projectId` | yes | Sanity project ID; entries without it are skipped with a warning |
+| `apiToken` | no | Project API token; falls back to the **Sanity.ApiToken** setting |
+| `datasets` | no | Array of the project's datasets; when omitted, the single `production` dataset is used |
+
+Dataset fields:
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | yes | Dataset name; entries without it are skipped |
+| `documentTypes` | no | Array of document types fetched from this dataset; when empty, inherits the **Sanity.DocumentTypes** setting |
+| `isPriority` | no | Marks the dataset as the priority one: it is queried first, so its documents win on conflicts. Default: `false` |
+
+When **Sanity.Projects** is empty, the module works with the single project from **Sanity.ProjectId**, **Sanity.Dataset**, and **Sanity.DocumentTypes** — existing configurations keep working unchanged.
+
+**Conflicts.** The same document id may exist in several sources (e.g. cloned datasets or projects). Sources are processed in priority order: projects in their configured order, and within a project the datasets marked with `isPriority` first, the rest in their configured order. On a conflict, the document from the higher-priority source is indexed, and a warning is always written to the platform log:
+
+```
+Sanity conflict in store 'B2B-store': document 'page-about' exists in project 'abc12345' dataset 'production' and in project 'abc12345' dataset 'draft'. The document from the higher-priority source wins.
+```
+
+### Internal Link Resolution
+
+Sanity stores internal links as raw references (`{"_type": "reference", "_ref": "<document-id>"}`), which are useless for building URLs on the frontend. When the module fetches or receives a document, it automatically resolves such references: it collects all document references at any nesting depth, queries the relative link of each referenced document in a single batch request, and injects it into the reference object as a `slug` property.
+
+The relative link of a referenced document is resolved as:
+
+```groq
+coalesce(permalink.current, seo.slug.current, slug.current)
+```
+
+For example, a footer navigation link stored as:
+
+```json
+{ "link": { "label": "About", "internalLink": { "_type": "reference", "_ref": "page-about" } } }
+```
+
+is indexed as:
+
+```json
+{ "link": { "label": "About", "internalLink": { "_type": "reference", "_ref": "page-about", "slug": "about-us" } } }
+```
+
+References to documents without a permalink/slug are left untouched. Resolution applies to every indexing path — index rebuild, scheduled sync, and webhook push — because all three fetch the document from the Sanity API.
+
+### Asset URL Resolution
+
+Image and file references get the same treatment: every asset reference is enriched with a `url` property pointing to the Sanity CDN. Asset ids encode everything needed for the URL, so no extra API request is made:
+
+| Asset id | Injected `url` |
+|---|---|
+| `image-<hash>-<width>x<height>-<format>` | `https://cdn.sanity.io/images/<projectId>/<dataset>/<hash>-<width>x<height>.<format>` |
+| `file-<hash>-<extension>` | `https://cdn.sanity.io/files/<projectId>/<dataset>/<hash>.<extension>` |
+
+For example, an image stored as:
+
+```json
+{ "logo": { "_type": "image", "asset": { "_type": "reference", "_ref": "image-abc123-800x600-jpg" } } }
+```
+
+is indexed as:
+
+```json
+{ "logo": { "_type": "image", "asset": { "_type": "reference", "_ref": "image-abc123-800x600-jpg", "url": "https://cdn.sanity.io/images/<projectId>/<dataset>/abc123-800x600.jpg" } } }
+```
+
+which matches the shape a GROQ `asset->{url}` dereference would produce (`logo.asset.url`). Malformed asset ids are left untouched.
 
 ### References
 
+* [Best Practices](docs/best-practices.md) — content modelling conventions: identifying content from the theme, permalinks, links and assets, datasets, schema evolution
 * [Sanity Content API (GROQ)](https://www.sanity.io/docs/http-query)
 * [Sanity HTTP API](https://www.sanity.io/docs/reference/http)
 * [Sanity Studio Quickstart](https://www.sanity.io/docs/sanity-studio-quickstart/setting-up-your-studio)
@@ -93,16 +192,28 @@ The content provider uses the [Sanity Content API (GROQ)](https://www.sanity.io/
 The module exposes a single endpoint:
 
 ```
-POST /api/pages/sanity?storeId={storeId}&cultureName={cultureName}
+POST /api/pages/sanity?cultureName={cultureName}
 ```
 
 To connect Sanity to this endpoint, configure webhooks in [Sanity Manage](https://www.sanity.io/manage) → your project → **API** → **Webhooks**.
 
 | Setting | Value |
 |---|---|
-| **URL** | `https://<your-domain>/api/pages/sanity?storeId=<StoreId>&cultureName=<cultureName>&api_key=<your-api-key>` |
+| **URL** | `https://<your-domain>/api/pages/sanity?cultureName=<cultureName>&api_key=<your-api-key>` |
 | **Trigger on** | `Create, Update, Delete` |
 | **HTTP method** | `POST` |
+| **Projection** | `{_id, _type}` (optional — see below) |
+
+### The payload is a notification, not content
+
+The webhook tells the module **which** document changed; it is never indexed as-is. On create and update the module reads `_id` from the payload, fetches that document from the Sanity API, and enriches it exactly as index rebuild does — resolved internal links and asset URLs included. The indexed content is therefore identical no matter what triggered it, and a partial or reordered webhook payload cannot put half-built content into the index.
+
+Consequences for configuration:
+
+* **A minimal projection is enough.** `{_id, _type}` keeps deliveries small and avoids Sanity's payload size limits on large documents; the full document is fetched anyway.
+* **One webhook serves every store.** The endpoint takes no `storeId`: the module looks the document up in the Sanity sources of every store that has them configured, and the store assignment follows that configuration (or the document's own `storeId` field). A page document is identified by its Sanity `_id`, so a document reachable from several stores is indexed once, for the first store whose sources contain it — exactly as index rebuild treats it. To target a specific store, set the document's `storeId` field.
+* **The document type must be configured.** A webhook for a type absent from every store's `Sanity.Projects` (or `Sanity.DocumentTypes`) fetches nothing, and a warning naming the document is written to the platform log.
+* **Deletes are the exception.** A deleted document can no longer be fetched, so for `delete` the payload supplies the id and the module publishes the delete straight away.
 
 ### Authorization
 

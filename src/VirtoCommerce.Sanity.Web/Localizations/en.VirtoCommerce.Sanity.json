@@ -29,11 +29,19 @@
       },
       "ApiToken": {
         "title": "API Token",
-        "description": "Sanity API token for Content API authentication"
+        "description": "Sanity API token for Content API authentication; also the default token for projects without their own token in the Projects setting"
+      },
+      "DocumentTypes": {
+        "title": "Document Types",
+        "description": "Comma-separated list of Sanity document types to fetch and index (default: page). Example: page,siteSettings,footerNavigation"
       },
       "PageType": {
-        "title": "Page Type",
-        "description": "Sanity document type to index as pages (default: page)"
+        "title": "Page Type (legacy)",
+        "description": "Legacy single Sanity document type to index as pages. Superseded by Document Types"
+      },
+      "Projects": {
+        "title": "Projects",
+        "description": "JSON array describing all Sanity sources of the store. Project fields: projectId (required), apiToken (optional, falls back to the API Token setting), datasets (array; when omitted, the single production dataset is used). Dataset fields: name (required), documentTypes (array; empty inherits the Document Types setting), isPriority (optional flag: the dataset is queried first, so its documents win when the same document exists in several datasets; conflicts are logged). When empty, the single project from the Project ID, Dataset, and Document Types settings is used. Example: [ { \"projectId\": \"abc12345\", \"apiToken\": \"sk...\", \"datasets\": [ { \"name\": \"production\", \"documentTypes\": [\"page\", \"footerNavigation\"], \"isPriority\": true }, { \"name\": \"marketing\", \"documentTypes\": [\"landing\", \"blog\"] } ] }, { \"projectId\": \"xyz67890\", \"datasets\": [ { \"name\": \"content\", \"documentTypes\": [\"landing\"] } ] } ]"
       }
     }
   }
