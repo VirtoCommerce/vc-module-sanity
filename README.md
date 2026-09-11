@@ -53,8 +53,8 @@ The following table shows how Sanity document fields map to VirtoCommerce `PageD
 | `permalink` | slug | `Permalink` | yes | Read from `permalink.current` |
 | `description` | text | `Description` | no | Meta description |
 | `body` | block[] | — | no | Stored as raw JSON in `Content` |
-| `storeId` | string | `StoreId` | recommended | Required for index rebuild. Fallback: webhook query param |
-| `cultureName` | string | `CultureName` | recommended | Required for index rebuild. Fallback: webhook query param |
+| `storeId` | string | `StoreId` | no | Overrides the store the document was found in; otherwise the store whose Sanity sources contain it |
+| `cultureName` | string | `CultureName` | recommended | Fallback: webhook query param |
 | `visibility` | string | `Visibility` | no | `Public` or `Private`. Default: `Private` |
 | `userGroups` | string[] | `UserGroups` | no | Restrict access to specific user groups |
 | `startDate` | datetime | `StartDate` | no | Scheduled publishing start |
@@ -70,7 +70,9 @@ The module integrates with [Virto Pages](https://github.com/VirtoCommerce/vc-mod
 
 * **Index Rebuild** — full reindex of all Sanity pages from the admin UI
 * **Scheduled Sync** — periodic synchronization of modified pages using `_updatedAt` filter
-* **Webhook Push** — real-time page updates via `POST /api/pages/sanity` (existing functionality)
+* **Webhook Push** — real-time page updates via `POST /api/pages/sanity`
+
+All three paths fetch the document from the Sanity API and enrich it the same way, so indexed content is identical regardless of what triggered the update.
 
 The content provider uses the [Sanity Content API (GROQ)](https://www.sanity.io/docs/http-query) to query pages. Configure the following store-level settings:
 
@@ -153,7 +155,7 @@ is indexed as:
 { "link": { "label": "About", "internalLink": { "_type": "reference", "_ref": "page-about", "slug": "about-us" } } }
 ```
 
-References to documents without a permalink/slug are left untouched. Resolution applies when documents are fetched from the Sanity API (index rebuild and scheduled sync); webhook payloads are indexed as received.
+References to documents without a permalink/slug are left untouched. Resolution applies to every indexing path — index rebuild, scheduled sync, and webhook push — because all three fetch the document from the Sanity API.
 
 ### Asset URL Resolution
 
@@ -180,6 +182,7 @@ which matches the shape a GROQ `asset->{url}` dereference would produce (`logo.a
 
 ### References
 
+* [Best Practices](docs/best-practices.md) — content modelling conventions: identifying content from the theme, permalinks, links and assets, datasets, schema evolution
 * [Sanity Content API (GROQ)](https://www.sanity.io/docs/http-query)
 * [Sanity HTTP API](https://www.sanity.io/docs/reference/http)
 * [Sanity Studio Quickstart](https://www.sanity.io/docs/sanity-studio-quickstart/setting-up-your-studio)
@@ -189,16 +192,28 @@ which matches the shape a GROQ `asset->{url}` dereference would produce (`logo.a
 The module exposes a single endpoint:
 
 ```
-POST /api/pages/sanity?storeId={storeId}&cultureName={cultureName}
+POST /api/pages/sanity?cultureName={cultureName}
 ```
 
 To connect Sanity to this endpoint, configure webhooks in [Sanity Manage](https://www.sanity.io/manage) → your project → **API** → **Webhooks**.
 
 | Setting | Value |
 |---|---|
-| **URL** | `https://<your-domain>/api/pages/sanity?storeId=<StoreId>&cultureName=<cultureName>&api_key=<your-api-key>` |
+| **URL** | `https://<your-domain>/api/pages/sanity?cultureName=<cultureName>&api_key=<your-api-key>` |
 | **Trigger on** | `Create, Update, Delete` |
 | **HTTP method** | `POST` |
+| **Projection** | `{_id, _type}` (optional — see below) |
+
+### The payload is a notification, not content
+
+The webhook tells the module **which** document changed; it is never indexed as-is. On create and update the module reads `_id` from the payload, fetches that document from the Sanity API, and enriches it exactly as index rebuild does — resolved internal links and asset URLs included. The indexed content is therefore identical no matter what triggered it, and a partial or reordered webhook payload cannot put half-built content into the index.
+
+Consequences for configuration:
+
+* **A minimal projection is enough.** `{_id, _type}` keeps deliveries small and avoids Sanity's payload size limits on large documents; the full document is fetched anyway.
+* **One webhook serves every store.** The endpoint takes no `storeId`: the module looks the document up in the Sanity sources of every store that has them configured, and the store assignment follows that configuration (or the document's own `storeId` field). A page document is identified by its Sanity `_id`, so a document reachable from several stores is indexed once, for the first store whose sources contain it — exactly as index rebuild treats it. To target a specific store, set the document's `storeId` field.
+* **The document type must be configured.** A webhook for a type absent from every store's `Sanity.Projects` (or `Sanity.DocumentTypes`) fetches nothing, and a warning naming the document is written to the platform log.
+* **Deletes are the exception.** A deleted document can no longer be fetched, so for `delete` the payload supplies the id and the module publishes the delete straight away.
 
 ### Authorization
 

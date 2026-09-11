@@ -22,7 +22,9 @@ public class Module : IModule
         serviceCollection.AddTransient<ISanityConverter, SanityConverter>();
         serviceCollection.AddTransient<ISanityApiClient, SanityApiClient>();
         serviceCollection.AddTransient<SanityLinkResolver>();
-        serviceCollection.AddTransient<IPageContentProvider, SanityContentProvider>();
+        // Registered as a concrete type as well: the webhook controller fetches documents through it
+        serviceCollection.AddTransient<SanityContentProvider>();
+        serviceCollection.AddTransient<IPageContentProvider>(provider => provider.GetRequiredService<SanityContentProvider>());
     }
 
     public void PostInitialize(IApplicationBuilder appBuilder)

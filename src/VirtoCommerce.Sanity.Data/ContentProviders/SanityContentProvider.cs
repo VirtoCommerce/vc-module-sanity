@@ -86,12 +86,16 @@ public class SanityContentProvider(
         };
     }
 
+    /// <summary>
+    /// Fetches documents from the Sanity sources of every configured store and converts them to page
+    /// documents with internal links and asset URLs resolved.
+    /// </summary>
     public async Task<IList<PageDocument>> GetByIdsAsync(IList<string> ids)
     {
         var result = new List<PageDocument>();
         var processedIds = new HashSet<string>();
 
-        await ForEachStoreAsync(async (projects, storeId) =>
+        await ForEachStoreAsync(async (projects, sourceStoreId) =>
         {
             var remainingIds = ids.Where(id => !processedIds.Contains(id)).ToList();
             if (remainingIds.Count == 0)
@@ -99,7 +103,7 @@ public class SanityContentProvider(
                 return;
             }
 
-            var documents = await GetDocumentsAsync(projects, storeId, remainingIds);
+            var documents = await GetDocumentsAsync(projects, sourceStoreId, remainingIds);
 
             foreach (var doc in documents)
             {
@@ -109,7 +113,7 @@ public class SanityContentProvider(
                     continue;
                 }
 
-                var pageDocument = sanityConverter.GetPageDocument(storeId, null, Pages.Core.Events.PageOperation.Publish, doc, null);
+                var pageDocument = sanityConverter.GetPageDocument(sourceStoreId, null, Pages.Core.Events.PageOperation.Publish, doc, null);
                 if (pageDocument == null)
                 {
                     continue;
@@ -117,7 +121,7 @@ public class SanityContentProvider(
 
                 if (pageDocument.StoreId.IsNullOrEmpty())
                 {
-                    pageDocument.StoreId = storeId;
+                    pageDocument.StoreId = sourceStoreId;
                 }
 
                 result.Add(pageDocument);
