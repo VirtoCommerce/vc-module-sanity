@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using VirtoCommerce.Pages.Core.ContentProviders;
@@ -19,12 +21,13 @@ using VirtoCommerce.StoreModule.Core.Services;
 
 namespace VirtoCommerce.Sanity.Data.ContentProviders;
 
-public class SanityContentProvider(
+public partial class SanityContentProvider(
     ISanityApiClient apiClient,
     ISanityConverter sanityConverter,
     SanityLinkResolver sanityLinkResolver,
     IStoreSearchService storeSearchService,
     ISettingsManager settingsManager,
+    IOptions<SanityOptions> options,
     ILogger<SanityContentProvider> logger)
     : IPageContentProvider
 {
@@ -269,7 +272,7 @@ public class SanityContentProvider(
             ? entry?.Value?.ToString()
             : null;
 
-        var defaultApiToken = GetSettingValue<string>(settings, ModuleConstants.Settings.General.ApiToken.Name);
+        var defaultApiToken = ResolveSecrets(GetSettingValue<string>(settings, ModuleConstants.Settings.General.ApiToken.Name), storeId);
 
         if (!string.IsNullOrWhiteSpace(rawProjects))
         {
@@ -325,10 +328,11 @@ public class SanityContentProvider(
     // marked as priority come first
     private bool TryPrepareProject(SanityProject project, Dictionary<string, ObjectSettingEntry> settings, string storeId, string defaultApiToken)
     {
-        if (string.IsNullOrEmpty(project.ApiToken))
-        {
-            project.ApiToken = defaultApiToken;
-        }
+        // An entry may reference a configured secret instead of carrying the token itself;
+        // an unresolved reference leaves the token empty, so the entry is skipped below
+        project.ApiToken = string.IsNullOrEmpty(project.ApiToken)
+            ? defaultApiToken
+            : ResolveSecrets(project.ApiToken, storeId);
 
         if (string.IsNullOrEmpty(project.ProjectId) || string.IsNullOrEmpty(project.ApiToken))
         {
@@ -365,6 +369,46 @@ public class SanityContentProvider(
         return true;
     }
 
+    /// <summary>
+    /// Replaces "${name}" references with the matching value of the "Sanity:Secrets" configuration section,
+    /// so that API tokens do not have to be stored in the settings JSON. Only names listed in that section
+    /// can be resolved: a setting must not be able to read arbitrary configuration values.
+    /// Returns null when a reference cannot be resolved, so the caller treats the token as missing
+    /// instead of sending the literal placeholder to Sanity.
+    /// </summary>
+    private string ResolveSecrets(string value, string storeId)
+    {
+        if (string.IsNullOrEmpty(value) || !value.Contains("${", StringComparison.Ordinal))
+        {
+            return value;
+        }
+
+        string missingSecretName = null;
+
+        var result = SecretReferenceRegex().Replace(value, match =>
+        {
+            var name = match.Groups[1].Value;
+
+            if (options.Value.Secrets.TryGetValue(name, out var secret) && !string.IsNullOrEmpty(secret))
+            {
+                return secret;
+            }
+
+            missingSecretName ??= name;
+            return string.Empty;
+        });
+
+        if (missingSecretName != null)
+        {
+            logger.LogWarning(
+                "Store '{StoreId}': secret '{SecretName}' referenced by the Sanity settings is not defined in the 'Sanity:Secrets' configuration section.",
+                storeId, missingSecretName);
+            return null;
+        }
+
+        return result;
+    }
+
     private static string[] GetDocumentTypes(Dictionary<string, ObjectSettingEntry> settings)
     {
         var documentTypes = GetSettingValue<string>(settings, ModuleConstants.Settings.General.DocumentTypes.Name);
@@ -387,6 +431,9 @@ public class SanityContentProvider(
             .Distinct(StringComparer.Ordinal)
             .ToArray();
     }
+
+    [GeneratedRegex("[$][{]([^}]+)[}]")]
+    private static partial Regex SecretReferenceRegex();
 
     private static T GetSettingValue<T>(Dictionary<string, ObjectSettingEntry> settings, string name)
     {

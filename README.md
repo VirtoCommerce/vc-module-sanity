@@ -81,7 +81,7 @@ The content provider uses the [Sanity Content API (GROQ)](https://www.sanity.io/
 | **Sanity.Enabled** | Enable/disable Sanity for the store | `false` |
 | **Sanity.ProjectId** | Sanity project ID | — |
 | **Sanity.Dataset** | Dataset name | `production` |
-| **Sanity.ApiToken** | API token (read access); also the default token for projects that carry no `apiToken` of their own in **Sanity.Projects** | — |
+| **Sanity.ApiToken** | API token (read access); also the default token for projects that carry no `apiToken` of their own in **Sanity.Projects**. Supports `${name}` secret references | — |
 | **Sanity.DocumentTypes** | Comma-separated list of document types to fetch and index | `page` |
 | **Sanity.Projects** | Single JSON setting describing all Sanity sources of the store: projects, their datasets, document types, and priority (see below) | `[]` |
 | **Sanity.PageType** | Legacy single document type; used only when **Sanity.DocumentTypes** is empty | `page` |
@@ -114,7 +114,7 @@ Project fields:
 | Field | Required | Description |
 |---|---|---|
 | `projectId` | yes | Sanity project ID; entries without it are skipped with a warning |
-| `apiToken` | no | Project API token; falls back to the **Sanity.ApiToken** setting |
+| `apiToken` | no | Project API token, normally a `${name}` reference to a configured secret (see Configuration below); falls back to the **Sanity.ApiToken** setting |
 | `datasets` | no | Array of the project's datasets; when omitted, the single `production` dataset is used |
 
 Dataset fields:
@@ -187,6 +187,69 @@ which matches the shape a GROQ `asset->{url}` dereference would produce (`logo.a
 * [Sanity HTTP API](https://www.sanity.io/docs/reference/http)
 * [Sanity Studio Quickstart](https://www.sanity.io/docs/sanity-studio-quickstart/setting-up-your-studio)
 
+## Configuration
+
+Webhook secrets and Sanity API tokens are read from configuration, not from the database, and are bound to `SanityOptions` from the `Sanity` section:
+
+```json
+{
+  "Sanity": {
+    "WebhookSecrets": [ "<secret from the Sanity webhook>" ],
+    "WebhookToleranceSeconds": 300,
+    "Secrets": {
+      "projectAToken": "sk...",
+      "projectBToken": "sk..."
+    }
+  }
+}
+```
+
+| Key | Description | Default |
+|---|---|---|
+| `Sanity:WebhookSecrets` | Secrets accepted when validating a webhook signature. A request is accepted when it matches **any** of them, which covers several webhooks (one per project) and lets a secret be rotated without downtime: add the new one, switch Sanity over, then drop the old one. Empty means every webhook request is rejected. | `[]` |
+| `Sanity:WebhookToleranceSeconds` | How far a webhook timestamp may be from the current time. Guards against replay. | `300` |
+| `Sanity:Secrets` | Named API tokens referenced as `${name}` from the **Sanity.Projects** store setting. Names are case-insensitive. | `{}` |
+
+### Referencing secrets from store settings
+
+**Sanity.Projects** is stored in the database and is editable in the admin UI, so it should not carry raw tokens. Reference a configured secret by name instead:
+
+```json
+[
+  {
+    "projectId": "abc12345",
+    "apiToken": "${projectAToken}",
+    "datasets": [ { "name": "production", "documentTypes": ["page"] } ]
+  }
+]
+```
+
+Only names defined in `Sanity:Secrets` can be resolved — a setting cannot reach arbitrary configuration values such as connection strings. An unresolved reference is never sent to Sanity: the module logs a warning naming the missing secret and skips the project. The same substitution applies to the **Sanity.ApiToken** store setting.
+
+### Environment variables
+
+Configuration keys map to environment variables with `__` (double underscore) instead of `:`, which is what you need on Linux and in containers, where `:` is not allowed in variable names. Array items are addressed by index, dictionary entries by key:
+
+```bash
+export Sanity__WebhookSecrets__0="whsec_current"
+export Sanity__WebhookSecrets__1="whsec_previous"   # during rotation
+export Sanity__WebhookToleranceSeconds="300"
+export Sanity__Secrets__projectAToken="sk..."
+export Sanity__Secrets__projectBToken="sk..."
+```
+
+The same in `docker-compose.yml`:
+
+```yaml
+services:
+  platform:
+    environment:
+      - Sanity__WebhookSecrets__0=whsec_current
+      - Sanity__Secrets__projectAToken=sk...
+```
+
+Environment variables override `appsettings.json`, so keep the file free of real secrets and inject them per environment (or from a secret store such as Azure Key Vault). In local development use `dotnet user-secrets` instead of editing the file.
+
 ## Webhook Configuration
 
 The module exposes a single endpoint:
@@ -199,7 +262,8 @@ To connect Sanity to this endpoint, configure webhooks in [Sanity Manage](https:
 
 | Setting | Value |
 |---|---|
-| **URL** | `https://<your-domain>/api/pages/sanity?cultureName=<cultureName>&api_key=<your-api-key>` |
+| **URL** | `https://<your-domain>/api/pages/sanity?cultureName=<cultureName>` |
+| **Secret** | any strong random string; the same value goes into `Sanity:WebhookSecrets` |
 | **Trigger on** | `Create, Update, Delete` |
 | **HTTP method** | `POST` |
 | **Projection** | `{_id, _type}` (optional — see below) |
@@ -217,10 +281,16 @@ Consequences for configuration:
 
 ### Authorization
 
-The endpoint requires an API key for a VirtoCommerce user with the following permissions:
+The endpoint is **authenticated by the webhook signature**, not by an API key, so no secret has to be put in the webhook URL, where Sanity would show it in the UI and the attempt log.
 
-- `sanity:update` — for create and update operations
-- `sanity:delete` — for delete operations
+Sanity signs every delivery with the secret from the webhook's **Secret** field and sends the result in the `sanity-webhook-signature` header as `t=<unix ms>,v1=<signature>`, where the signature is a base64url encoded HMAC-SHA256 of `<t>.<raw body>`. The module recomputes it over the raw request body and rejects the request with `401 Unauthorized` when:
+
+* no secret is configured in `Sanity:WebhookSecrets` — **an unconfigured module accepts nothing**;
+* the header is missing or malformed;
+* the timestamp is outside `Sanity:WebhookToleranceSeconds` (5 minutes by default), which blocks replays;
+* the signature matches none of the configured secrets.
+
+Every rejection is written to the platform log with its reason. See [Configuration](#configuration) for where to put the secret.
 
 You can verify webhook delivery in Sanity Manage → Webhooks → **Your webhook** → **...** → **Show attempt log**.
 

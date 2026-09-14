@@ -3,11 +3,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Moq;
 using Newtonsoft.Json.Linq;
 using VirtoCommerce.Pages.Core.Models;
 using VirtoCommerce.Platform.Core.Settings;
 using VirtoCommerce.Sanity.Core;
+using VirtoCommerce.Sanity.Core.Models;
 using VirtoCommerce.Sanity.Core.Services;
 using VirtoCommerce.Sanity.Data.ContentProviders;
 using VirtoCommerce.Sanity.Data.Services;
@@ -322,6 +324,7 @@ public class SanityContentProviderTests
             new SanityLinkResolver(apiClient),
             storeSearchService.Object,
             settingsManager.Object,
+            Options.Create(new SanityOptions()),
             logger);
     }
 

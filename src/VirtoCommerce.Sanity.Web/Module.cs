@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using VirtoCommerce.Pages.Core.ContentProviders;
 using VirtoCommerce.Platform.Core.Modularity;
 using VirtoCommerce.Platform.Core.Security;
 using VirtoCommerce.Platform.Core.Settings;
 using VirtoCommerce.Sanity.Core;
+using VirtoCommerce.Sanity.Core.Models;
 using VirtoCommerce.Sanity.Core.Services;
 using VirtoCommerce.Sanity.Data.ContentProviders;
 using VirtoCommerce.Sanity.Data.Services;
@@ -12,12 +14,17 @@ using VirtoCommerce.StoreModule.Core.Model;
 
 namespace VirtoCommerce.Sanity.Web;
 
-public class Module : IModule
+public class Module : IModule, IHasConfiguration
 {
     public ManifestModuleInfo ModuleInfo { get; set; }
+    public IConfiguration Configuration { get; set; }
 
     public void Initialize(IServiceCollection serviceCollection)
     {
+        serviceCollection.AddOptions<SanityOptions>()
+            .Bind(Configuration.GetSection("Sanity"))
+            .ValidateDataAnnotations();
+
         serviceCollection.AddHttpClient("Sanity");
         serviceCollection.AddTransient<ISanityConverter, SanityConverter>();
         serviceCollection.AddTransient<ISanityApiClient, SanityApiClient>();

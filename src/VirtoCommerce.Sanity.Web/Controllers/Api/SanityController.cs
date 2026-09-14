@@ -8,10 +8,9 @@ using VirtoCommerce.Pages.Core.Events;
 using VirtoCommerce.Pages.Core.Models;
 using VirtoCommerce.Platform.Core.Common;
 using VirtoCommerce.Platform.Core.Events;
-using VirtoCommerce.Platform.Core.Security;
 using VirtoCommerce.Sanity.Core.Services;
 using VirtoCommerce.Sanity.Data.ContentProviders;
-using Permissions = VirtoCommerce.Sanity.Core.ModuleConstants.Security.Permissions;
+using VirtoCommerce.Sanity.Web.Filters;
 
 namespace VirtoCommerce.Sanity.Web.Controllers.Api;
 
@@ -27,8 +26,12 @@ public class SanityController(
     // POST: /api/pages/sanity
     /// <summary>
     /// Create, update or delete page in Pages module based on the notification from Sanity webhook.
+    /// The request is authenticated by its signature instead of an API key, so no secret has to be
+    /// put in the webhook URL configured in Sanity.
     /// </summary>
     [HttpPost]
+    [AllowAnonymous]
+    [SanityWebhookSignature]
     public async Task<ActionResult> Post(
         [FromQuery] string cultureName,
         [FromHeader(Name = "sanity-operation")] string operation,
@@ -38,12 +41,6 @@ public class SanityController(
         if (pageOperation == PageOperation.Unknown)
         {
             return Ok();
-        }
-
-        if ((pageOperation == PageOperation.Delete && !User.HasGlobalPermission(Permissions.Delete)) ||
-            !User.HasGlobalPermission(Permissions.Update))
-        {
-            return Forbid();
         }
 
         var documentId = body?["_id"]?.ToString();
