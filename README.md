@@ -266,18 +266,29 @@ To connect Sanity to this endpoint, configure webhooks in [Sanity Manage](https:
 | **Secret** | any strong random string; the same value goes into `Sanity:WebhookSecrets` |
 | **Trigger on** | `Create, Update, Delete` |
 | **HTTP method** | `POST` |
-| **Projection** | `{_id, _type}` (optional — see below) |
+| **Projection** | leave empty — the module works from the headers (see below) |
 
 ### The payload is a notification, not content
 
-The webhook tells the module **which** document changed; it is never indexed as-is. On create and update the module reads `_id` from the payload, fetches that document from the Sanity API, and enriches it exactly as index rebuild does — resolved internal links and asset URLs included. The indexed content is therefore identical no matter what triggered it, and a partial or reordered webhook payload cannot put half-built content into the index.
+The webhook tells the module **which** document changed; it is never indexed as-is. Sanity names the change in its request headers, and the module works from those:
+
+| Header | Used for |
+|---|---|
+| `sanity-document-id` | the document to fetch |
+| `sanity-project-id` | the project to fetch it from |
+| `sanity-dataset` | the dataset to fetch it from |
+| `sanity-operation` | `create` / `update` / `delete` |
+| `sanity-webhook-signature` | authentication (see [Authorization](#authorization)) |
+
+On create and update the module fetches that document from that project and dataset, and enriches it exactly as index rebuild does — resolved internal links and asset URLs included. The indexed content is therefore identical no matter what triggered it, and a partial or reordered webhook payload cannot put half-built content into the index.
 
 Consequences for configuration:
 
-* **A minimal projection is enough.** `{_id, _type}` keeps deliveries small and avoids Sanity's payload size limits on large documents; the full document is fetched anyway.
-* **One webhook serves every store.** The endpoint takes no `storeId`: the module looks the document up in the Sanity sources of every store that has them configured, and the store assignment follows that configuration (or the document's own `storeId` field). A page document is identified by its Sanity `_id`, so a document reachable from several stores is indexed once, for the first store whose sources contain it — exactly as index rebuild treats it. To target a specific store, set the document's `storeId` field.
-* **The document type must be configured.** A webhook for a type absent from every store's `Sanity.Projects` (or `Sanity.DocumentTypes`) fetches nothing, and a warning naming the document is written to the platform log.
-* **Deletes are the exception.** A deleted document can no longer be fetched, so for `delete` the payload supplies the id and the module publishes the delete straight away.
+* **The projection can be empty.** Everything the module needs is in the headers, so there is no reason to ship the document body; an empty projection keeps deliveries small and avoids Sanity's payload size limits on large documents. A payload is still accepted — `_id` is read from it when the header is absent.
+* **One webhook serves every store.** The endpoint takes no `storeId`: the module looks the document up in the stores whose configuration contains the project and dataset from the headers, and the store assignment follows that configuration (or the document's own `storeId` field). A page document is identified by its Sanity `_id`, so a document reachable from several stores is indexed once, for the first store whose sources contain it — exactly as index rebuild treats it. To target a specific store, set the document's `storeId` field.
+* **The notification's own project wins.** Because the lookup is scoped by `sanity-project-id` and `sanity-dataset`, the same document id living in another project or dataset is irrelevant here: no cross-source conflict resolution takes place, and no other project is queried. Index rebuild, which has no such hint, still resolves conflicts by priority.
+* **The project and document type must be configured.** A webhook naming a project absent from every store's **Sanity.Projects**, or a document whose type is not listed for that dataset, fetches nothing; a warning naming the document, project and dataset is written to the platform log.
+* **Deletes are the exception.** A deleted document can no longer be fetched, so the module publishes the delete straight from the id in the header.
 
 ### Authorization
 

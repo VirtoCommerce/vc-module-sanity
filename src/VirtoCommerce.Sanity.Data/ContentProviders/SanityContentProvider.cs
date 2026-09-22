@@ -93,7 +93,18 @@ public partial class SanityContentProvider(
     /// Fetches documents from the Sanity sources of every configured store and converts them to page
     /// documents with internal links and asset URLs resolved.
     /// </summary>
-    public async Task<IList<PageDocument>> GetByIdsAsync(IList<string> ids)
+    public Task<IList<PageDocument>> GetByIdsAsync(IList<string> ids)
+    {
+        return GetByIdsAsync(ids, projectId: null, dataset: null);
+    }
+
+    /// <summary>
+    /// Fetches documents the same way as indexing does, optionally restricted to a single Sanity
+    /// project and dataset. A webhook names its source in the sanity-project-id and sanity-dataset
+    /// headers, which keeps the lookup to the source the notification came from instead of every
+    /// configured one, and makes the same document id in another project irrelevant.
+    /// </summary>
+    public async Task<IList<PageDocument>> GetByIdsAsync(IList<string> ids, string projectId, string dataset)
     {
         var result = new List<PageDocument>();
         var processedIds = new HashSet<string>();
@@ -101,12 +112,14 @@ public partial class SanityContentProvider(
         await ForEachStoreAsync(async (projects, sourceStoreId) =>
         {
             var remainingIds = ids.Where(id => !processedIds.Contains(id)).ToList();
-            if (remainingIds.Count == 0)
+            var sources = FilterSources(projects, projectId, dataset);
+
+            if (remainingIds.Count == 0 || sources.Count == 0)
             {
                 return;
             }
 
-            var documents = await GetDocumentsAsync(projects, sourceStoreId, remainingIds);
+            var documents = await GetDocumentsAsync(sources, sourceStoreId, remainingIds);
 
             foreach (var doc in documents)
             {
@@ -132,6 +145,31 @@ public partial class SanityContentProvider(
         });
 
         return result;
+    }
+
+    /// <summary>
+    /// Narrows the configured sources to the project and dataset a notification came from.
+    /// Without a project the sources are returned as they are, which is what indexing needs.
+    /// </summary>
+    private static IList<SanityProject> FilterSources(IList<SanityProject> projects, string projectId, string dataset)
+    {
+        if (string.IsNullOrEmpty(projectId))
+        {
+            return projects;
+        }
+
+        return projects
+            .Where(x => x.ProjectId.EqualsIgnoreCase(projectId))
+            .Select(x => new SanityProject
+            {
+                ProjectId = x.ProjectId,
+                ApiToken = x.ApiToken,
+                Datasets = string.IsNullOrEmpty(dataset)
+                    ? x.Datasets
+                    : x.Datasets.Where(d => d.Name.EqualsIgnoreCase(dataset)).ToList(),
+            })
+            .Where(x => x.Datasets.Count > 0)
+            .ToList();
     }
 
     private async Task<IList<JObject>> GetDocumentsAsync(IList<SanityProject> projects, string storeId, IList<string> ids)

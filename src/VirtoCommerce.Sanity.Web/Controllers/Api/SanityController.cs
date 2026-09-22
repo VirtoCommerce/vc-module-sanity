@@ -35,6 +35,9 @@ public class SanityController(
     public async Task<ActionResult> Post(
         [FromQuery] string cultureName,
         [FromHeader(Name = "sanity-operation")] string operation,
+        [FromHeader(Name = "sanity-project-id")] string projectId,
+        [FromHeader(Name = "sanity-dataset")] string dataset,
+        [FromHeader(Name = "sanity-document-id")] string documentId,
         [FromBody] JObject body)
     {
         var pageOperation = sanityConverter.GetPageOperation(operation);
@@ -43,14 +46,19 @@ public class SanityController(
             return Ok();
         }
 
-        var documentId = body?["_id"]?.ToString();
+        // Sanity names the changed document in a header, so the payload projection may be empty
+        if (string.IsNullOrEmpty(documentId))
+        {
+            documentId = body?["_id"]?.ToString();
+        }
+
         if (string.IsNullOrEmpty(documentId))
         {
             logger.LogWarning("Sanity webhook notification carries no document id, nothing to index.");
             return Ok();
         }
 
-        var pageDocuments = await GetPageDocumentsAsync(documentId, cultureName, pageOperation, body);
+        var pageDocuments = await GetPageDocumentsAsync(documentId, projectId, dataset, cultureName, pageOperation, body);
 
         foreach (var pageDocument in pageDocuments)
         {
@@ -72,26 +80,31 @@ public class SanityController(
     /// <summary>
     /// The webhook payload is treated as a notification, not as content: it may carry only ids or a
     /// partial projection, and it never has internal links and asset URLs resolved. So the document is
-    /// fetched and enriched the same way as during indexing, from the Sanity sources of every store
-    /// that has them configured. A deleted document can no longer be fetched, so for that operation
-    /// the payload is the only available source of its id.
+    /// fetched and enriched the same way as during indexing, from the project and dataset the
+    /// notification names. A deleted document can no longer be fetched, so it is published from its
+    /// id alone.
     /// </summary>
     private async Task<IList<PageDocument>> GetPageDocumentsAsync(
-        string documentId, string cultureName, PageOperation pageOperation, JObject body)
+        string documentId, string projectId, string dataset, string cultureName, PageOperation pageOperation, JObject body)
     {
         if (pageOperation == PageOperation.Delete)
         {
+            body ??= [];
+
+            // The converter needs the id, which the header carries even when the payload is empty
+            body["_id"] ??= documentId;
+
             var deletedDocument = sanityConverter.GetPageDocument(null, cultureName, pageOperation, body, Request);
             return deletedDocument != null ? [deletedDocument] : [];
         }
 
-        var pageDocuments = await sanityContentProvider.GetByIdsAsync([documentId]);
+        var pageDocuments = await sanityContentProvider.GetByIdsAsync([documentId], projectId, dataset);
 
         if (pageDocuments.Count == 0)
         {
             logger.LogWarning(
-                "Sanity document '{DocumentId}' from the webhook notification was not found in any configured Sanity source, nothing to index.",
-                documentId);
+                "Sanity document '{DocumentId}' from the webhook notification was not found in project '{ProjectId}' dataset '{Dataset}', nothing to index. Check that the project and its document type are configured for a store.",
+                documentId, projectId, dataset);
         }
 
         return pageDocuments;
