@@ -46,6 +46,7 @@ public static class ModuleConstants
                 Name = $"{GroupName}.ProjectId",
                 GroupName = $"CMS|{GroupName}",
                 ValueType = SettingValueType.ShortText,
+                IsPublic = true,
                 DefaultValue = string.Empty,
             };
 
@@ -54,9 +55,12 @@ public static class ModuleConstants
                 Name = $"{GroupName}.Dataset",
                 GroupName = $"CMS|{GroupName}",
                 ValueType = SettingValueType.ShortText,
+                IsPublic = true,
                 DefaultValue = "production",
             };
 
+            // Also serves as the default token for entries of the Projects setting that carry no "apiToken" of their own,
+            // so a shared token does not have to sit in the Projects JSON.
             public static SettingDescriptor ApiToken { get; } = new()
             {
                 Name = $"{GroupName}.ApiToken",
@@ -65,12 +69,38 @@ public static class ModuleConstants
                 DefaultValue = string.Empty,
             };
 
+            public static SettingDescriptor DocumentTypes { get; } = new()
+            {
+                Name = $"{GroupName}.DocumentTypes",
+                GroupName = $"CMS|{GroupName}",
+                ValueType = SettingValueType.ShortText,
+                DefaultValue = "page",
+            };
+
+            // The single JSON setting describing all Sanity sources of the store: an array of projects, each with its own
+            // credentials and datasets, deserialized directly into SanityProject models, e.g.
+            // [{"projectId": "abc", "apiToken": "sk...", "datasets": [{"name": "production", "documentTypes": ["page"], "isPriority": true}]}].
+            // The "apiToken" entry field is optional and inherits the ApiToken setting. A dataset marked with "isPriority"
+            // is queried first, so its documents win when the same document exists in several datasets;
+            // conflicts are always logged.
+            // When empty, the module works with the single project from the ProjectId, Dataset and DocumentTypes settings.
+            // Not public because entries may carry API tokens.
+            public static SettingDescriptor Projects { get; } = new()
+            {
+                Name = $"{GroupName}.Projects",
+                GroupName = $"CMS|{GroupName}",
+                ValueType = SettingValueType.Json,
+                DefaultValue = "[]",
+            };
+
+            // Legacy single-type setting, superseded by DocumentTypes. Kept registered so existing store values are still readable.
             public static SettingDescriptor PageType { get; } = new()
             {
                 Name = $"{GroupName}.PageType",
                 GroupName = $"CMS|{GroupName}",
                 ValueType = SettingValueType.ShortText,
                 DefaultValue = "page",
+                IsHidden = true,
             };
         }
 
@@ -82,6 +112,8 @@ public static class ModuleConstants
                 yield return General.ProjectId;
                 yield return General.Dataset;
                 yield return General.ApiToken;
+                yield return General.DocumentTypes;
+                yield return General.Projects;
                 yield return General.PageType;
             }
         }
@@ -94,6 +126,8 @@ public static class ModuleConstants
                 yield return General.ProjectId;
                 yield return General.Dataset;
                 yield return General.ApiToken;
+                yield return General.DocumentTypes;
+                yield return General.Projects;
                 yield return General.PageType;
             }
         }
