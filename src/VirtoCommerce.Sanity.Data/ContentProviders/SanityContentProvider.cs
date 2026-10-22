@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -132,7 +133,8 @@ public partial class SanityContentProvider(
                 .Where(pageDocument => pageDocument != null));
         },
         // so the remaining stores need not be read once every id is found
-        isDone: () => processedIds.Count >= validIds.Count);
+        isDone: () => processedIds.Count >= validIds.Count,
+        logConfigurationWarnings: string.IsNullOrEmpty(projectId));
 
         return result;
     }
@@ -178,7 +180,8 @@ public partial class SanityContentProvider(
             }
 
             return Task.CompletedTask;
-        });
+        },
+        logConfigurationWarnings: false);
 
         return storeIds;
     }
@@ -288,8 +291,15 @@ public partial class SanityContentProvider(
         return string.Concat(filters);
     }
 
-    private async Task ForEachStoreAsync(Func<IList<SanityProject>, string, Task> action, Func<bool> isDone = null)
+    /// <summary>
+    /// Runs the action for every enabled store with Sanity sources. Problems in a store's Sanity settings
+    /// are logged only when <paramref name="logConfigurationWarnings"/> is set: indexing reports them,
+    /// while a webhook delivery reads every store's settings and would repeat them on each notification.
+    /// </summary>
+    private async Task ForEachStoreAsync(Func<IList<SanityProject>, string, Task> action, Func<bool> isDone = null, bool logConfigurationWarnings = true)
     {
+        ILogger configurationLogger = logConfigurationWarnings ? logger : NullLogger.Instance;
+
         const int storeBatchSize = 50;
         var criteria = AbstractTypeFactory<StoreSearchCriteria>.TryCreateInstance();
         criteria.Take = storeBatchSize;
@@ -303,7 +313,7 @@ public partial class SanityContentProvider(
 
             foreach (var store in storesResult.Results)
             {
-                await TryProcessStoreAsync(store.Id, action);
+                await TryProcessStoreAsync(store.Id, action, configurationLogger);
 
                 if (isDone?.Invoke() == true)
                 {
@@ -316,7 +326,7 @@ public partial class SanityContentProvider(
         while (criteria.Skip < storeCount);
     }
 
-    private async Task TryProcessStoreAsync(string storeId, Func<IList<SanityProject>, string, Task> action)
+    private async Task TryProcessStoreAsync(string storeId, Func<IList<SanityProject>, string, Task> action, ILogger configurationLogger)
     {
         var settings = (await settingsManager.GetObjectSettingsAsync(
         [
@@ -334,7 +344,7 @@ public partial class SanityContentProvider(
             return;
         }
 
-        var projects = GetProjects(settings, storeId);
+        var projects = GetProjects(settings, storeId, configurationLogger);
         if (projects.Count == 0)
         {
             return;
@@ -343,7 +353,7 @@ public partial class SanityContentProvider(
         await action(projects, storeId);
     }
 
-    private IList<SanityProject> GetProjects(Dictionary<string, ObjectSettingEntry> settings, string storeId)
+    private IList<SanityProject> GetProjects(Dictionary<string, ObjectSettingEntry> settings, string storeId, ILogger configurationLogger)
     {
         var projects = new List<SanityProject>();
 
@@ -351,7 +361,7 @@ public partial class SanityContentProvider(
             ? entry?.Value?.ToString()
             : null;
 
-        var defaultApiToken = ResolveSecrets(GetSettingValue<string>(settings, ModuleConstants.Settings.General.ApiToken.Name), storeId);
+        var defaultApiToken = ResolveSecrets(GetSettingValue<string>(settings, ModuleConstants.Settings.General.ApiToken.Name), storeId, configurationLogger);
 
         if (!string.IsNullOrWhiteSpace(rawProjects))
         {
@@ -359,11 +369,11 @@ public partial class SanityContentProvider(
             {
                 var configuredProjects = JsonConvert.DeserializeObject<List<SanityProject>>(rawProjects) ?? [];
 
-                projects.AddRange(configuredProjects.Where(project => TryPrepareProject(project, settings, storeId, defaultApiToken)));
+                projects.AddRange(configuredProjects.Where(project => TryPrepareProject(project, settings, storeId, defaultApiToken, configurationLogger)));
             }
             catch (JsonException ex)
             {
-                logger.LogWarning(ex,
+                configurationLogger.LogWarning(ex,
                     "Store '{StoreId}': the '{SettingName}' setting contains invalid JSON. Falling back to the single project from the '{ProjectIdSettingName}' setting.",
                     storeId, ModuleConstants.Settings.General.Projects.Name, ModuleConstants.Settings.General.ProjectId.Name);
             }
@@ -398,17 +408,17 @@ public partial class SanityContentProvider(
     // Validates a deserialized project and normalizes it for querying: fills the default API token,
     // drops nameless datasets, fills inherited document types, and orders datasets so the ones
     // marked as priority come first
-    private bool TryPrepareProject(SanityProject project, Dictionary<string, ObjectSettingEntry> settings, string storeId, string defaultApiToken)
+    private bool TryPrepareProject(SanityProject project, Dictionary<string, ObjectSettingEntry> settings, string storeId, string defaultApiToken, ILogger configurationLogger)
     {
         // An entry may reference a configured secret instead of carrying the token itself;
         // an unresolved reference leaves the token empty, so the entry is skipped below
         project.ApiToken = string.IsNullOrEmpty(project.ApiToken)
             ? defaultApiToken
-            : ResolveSecrets(project.ApiToken, storeId);
+            : ResolveSecrets(project.ApiToken, storeId, configurationLogger);
 
         if (string.IsNullOrEmpty(project.ProjectId) || string.IsNullOrEmpty(project.ApiToken))
         {
-            logger.LogWarning(
+            configurationLogger.LogWarning(
                 "Store '{StoreId}': an entry in the '{SettingName}' setting is skipped because it has no project id or no API token.",
                 storeId, ModuleConstants.Settings.General.Projects.Name);
             return false;
@@ -448,7 +458,7 @@ public partial class SanityContentProvider(
     /// Returns null when a reference cannot be resolved, so the caller treats the token as missing
     /// instead of sending the literal placeholder to Sanity.
     /// </summary>
-    private string ResolveSecrets(string value, string storeId)
+    private string ResolveSecrets(string value, string storeId, ILogger configurationLogger)
     {
         if (string.IsNullOrEmpty(value) || !value.Contains("${", StringComparison.Ordinal))
         {
@@ -464,7 +474,7 @@ public partial class SanityContentProvider(
 
         if (missingSecretName != null)
         {
-            logger.LogWarning(
+            configurationLogger.LogWarning(
                 "Store '{StoreId}': secret '{SecretName}' referenced by the Sanity settings is not defined in the 'Sanity:Secrets' configuration section.",
                 storeId, missingSecretName);
             return null;

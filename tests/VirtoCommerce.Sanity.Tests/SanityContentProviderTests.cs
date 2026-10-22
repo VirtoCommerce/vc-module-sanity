@@ -363,6 +363,30 @@ public class SanityContentProviderTests
     }
 
     [Fact]
+    public async Task WebhookLookups_MisconfiguredStore_IsNotReportedOnEveryNotification()
+    {
+        var logger = new InMemoryLogger();
+        var provider = CreateProvider(new FakeSanityApiClient(), logger, new Dictionary<string, Dictionary<string, object>>
+        {
+            ["store1"] = [],
+            ["store2"] = new()
+            {
+                [ModuleConstants.Settings.General.Projects.Name] = """[{ "projectId": "project1", "apiToken": "${missing}" }]""",
+            },
+        }, out _);
+
+        await provider.GetStoreIdsAsync("project1", "production");
+        await provider.GetByIdsAsync(["page-1"], "project1", "production");
+
+        Assert.Empty(logger.Entries);
+
+        // Indexing still reports the store's configuration problem
+        await provider.GetByIdsAsync(["page-1"]);
+
+        Assert.Contains(logger.Entries, x => x.Level == LogLevel.Warning && x.Message.Contains("store2") && x.Message.Contains("missing"));
+    }
+
+    [Fact]
     public async Task GetStoreIdsAsync_ReturnsEnabledStoresConfiguredForSource()
     {
         var provider = CreateProvider(new FakeSanityApiClient(), new InMemoryLogger(), new Dictionary<string, Dictionary<string, object>>
