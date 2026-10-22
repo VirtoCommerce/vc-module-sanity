@@ -24,6 +24,13 @@ public class SanityOptions
     public int WebhookToleranceSeconds { get; set; } = 300;
 
     /// <summary>
+    /// Largest webhook body accepted, in bytes. The body is buffered to check its signature before the
+    /// request is authenticated, so this bounds what an anonymous caller can make the server hold.
+    /// </summary>
+    [Range(1024, 100 * 1024 * 1024)]
+    public long WebhookMaxBodySize { get; set; } = 10 * 1024 * 1024;
+
+    /// <summary>
     /// Named secrets referenced as "${name}" from the Sanity.Projects store setting.
     /// Only names listed here can be resolved, so a setting cannot reach arbitrary configuration values.
     /// </summary>

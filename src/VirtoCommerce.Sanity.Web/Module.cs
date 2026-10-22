@@ -23,7 +23,9 @@ public class Module : IModule, IHasConfiguration
     {
         serviceCollection.AddOptions<SanityOptions>()
             .Bind(Configuration.GetSection("Sanity"))
-            .ValidateDataAnnotations();
+            .ValidateDataAnnotations()
+            // Fail at startup rather than on the first webhook delivery
+            .ValidateOnStart();
 
         serviceCollection.AddHttpClient("Sanity");
         serviceCollection.AddTransient<ISanityConverter, SanityConverter>();

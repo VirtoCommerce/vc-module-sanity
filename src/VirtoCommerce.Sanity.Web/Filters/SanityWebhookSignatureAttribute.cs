@@ -1,6 +1,8 @@
 using System;
 using System.Buffers.Text;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -30,6 +32,10 @@ public sealed partial class SanityWebhookSignatureAttribute : Attribute, IAsyncR
 
     // Sanity never issues timestamps before 2021-01-01, so anything earlier is malformed
     private const long MinimumTimestamp = 1609459200000;
+
+    // Bodies up to this size are buffered in memory, larger ones in a temporary file
+    private const int BodyBufferThreshold = 64 * 1024;
+    private const int BodyReadBufferSize = 16 * 1024;
 
     public async Task OnResourceExecutionAsync(ResourceExecutingContext context, ResourceExecutionDelegate next)
     {
@@ -89,43 +95,73 @@ public sealed partial class SanityWebhookSignatureAttribute : Attribute, IAsyncR
             return "the signature is not valid base64url";
         }
 
-        var signedPayload = await GetSignedPayloadAsync(request, timestampText);
-
-        foreach (var secret in options.WebhookSecrets)
+        if (request.ContentLength > options.WebhookMaxBodySize)
         {
-            if (string.IsNullOrEmpty(secret))
-            {
-                continue;
-            }
+            return $"the body is larger than {options.WebhookMaxBodySize} bytes";
+        }
 
-            var actualSignature = HMACSHA256.HashData(Encoding.UTF8.GetBytes(secret), signedPayload);
+        var secrets = options.WebhookSecrets.Where(x => !string.IsNullOrEmpty(x)).ToList();
+        var signatures = await ComputeSignaturesAsync(request, timestampText, secrets, options.WebhookMaxBodySize);
+        if (signatures == null)
+        {
+            return $"the body is larger than {options.WebhookMaxBodySize} bytes";
+        }
 
-            if (CryptographicOperations.FixedTimeEquals(actualSignature, expectedSignature))
-            {
-                return null;
-            }
+        if (signatures.Any(x => CryptographicOperations.FixedTimeEquals(x, expectedSignature)))
+        {
+            return null;
         }
 
         // The body size helps tell a wrong secret apart from a body altered on the way to the module
-        return $"the signature does not match any configured secret (signed body: {signedPayload.Length - timestampText.Length - 1} bytes)";
+        return $"the signature does not match any configured secret (signed body: {request.Body.Length} bytes)";
     }
 
     /// <summary>
-    /// Builds "&lt;timestamp&gt;.&lt;raw body&gt;" from the bytes as received, then rewinds the body
-    /// so that model binding can read it again.
+    /// Hashes "&lt;timestamp&gt;.&lt;raw body&gt;" with every secret while reading the bytes as received,
+    /// then rewinds the body so that model binding can read it again. The body is buffered by the
+    /// request itself, up to <paramref name="maxBodySize"/>; returns null when it is larger.
     /// </summary>
-    private static async Task<byte[]> GetSignedPayloadAsync(HttpRequest request, string timestampText)
+    private static async Task<IList<byte[]>> ComputeSignaturesAsync(HttpRequest request, string timestampText, IList<string> secrets, long maxBodySize)
     {
-        request.EnableBuffering();
-        request.Body.Position = 0;
+        var hashes = secrets.Select(x => IncrementalHash.CreateHMAC(HashAlgorithmName.SHA256, Encoding.UTF8.GetBytes(x))).ToList();
 
-        using var buffer = new MemoryStream();
-        await buffer.WriteAsync(Encoding.UTF8.GetBytes($"{timestampText}."));
-        await request.Body.CopyToAsync(buffer);
+        try
+        {
+            var prefix = Encoding.UTF8.GetBytes($"{timestampText}.");
+            hashes.ForEach(x => x.AppendData(prefix));
 
-        request.Body.Position = 0;
+            request.EnableBuffering(BodyBufferThreshold, maxBodySize);
+            request.Body.Position = 0;
 
-        return buffer.ToArray();
+            var buffer = new byte[BodyReadBufferSize];
+            long totalRead = 0;
+            int read;
+            while ((read = await request.Body.ReadAsync(buffer)) > 0)
+            {
+                // Counted here as well: a body that is already seekable is not wrapped by EnableBuffering,
+                // so its limit would not apply
+                totalRead += read;
+                if (totalRead > maxBodySize)
+                {
+                    return null;
+                }
+
+                hashes.ForEach(x => x.AppendData(buffer, 0, read));
+            }
+
+            request.Body.Position = 0;
+
+            return hashes.Select(x => x.GetHashAndReset()).ToList();
+        }
+        catch (IOException)
+        {
+            // Thrown by the buffering stream when the body exceeds its limit
+            return null;
+        }
+        finally
+        {
+            hashes.ForEach(x => x.Dispose());
+        }
     }
 
     [GeneratedRegex(@"^t=(\d+)[, ]+v1=([^, ]+)$")]
