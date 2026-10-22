@@ -47,37 +47,18 @@ public partial class SanityContentProvider(
 
         await ForEachStoreAsync(async (projects, _) =>
         {
-            foreach (var project in projects)
-            {
-                var projectKey = $"{project.ProjectId}:{string.Join("|", project.Datasets.Select(x => $"{x.Name}:{string.Join(",", x.DocumentTypes)}"))}";
-                if (!processedProjects.Add(projectKey))
-                {
-                    continue;
-                }
+            // Stores configured with the same sources query them once
+            var newProjects = projects.Where(x => processedProjects.Add(GetSourcesKey(x))).ToList();
 
+            foreach (var project in newProjects)
+            {
                 foreach (var dataset in project.Datasets)
                 {
-                    var query = BuildChangesQuery(dataset.DocumentTypes, criteria.StartDate, criteria.EndDate);
-                    var response = await apiClient.QueryAsync(project.ProjectId, dataset.Name, project.ApiToken, query);
+                    var changes = await GetChangesAsync(project, dataset, criteria);
 
-                    foreach (var doc in response.Results)
-                    {
-                        var documentId = doc["_id"]?.ToString();
-
-                        // The same document changed in several sources produces a single change;
-                        // the winning content is chosen at indexing time
-                        if (documentId == null || !seenDocumentIds.Add(documentId))
-                        {
-                            continue;
-                        }
-
-                        allChanges.Add(new IndexDocumentChange
-                        {
-                            DocumentId = documentId,
-                            ChangeDate = doc["_updatedAt"]?.ToObject<DateTime?>() ?? DateTime.UtcNow,
-                            ChangeType = IndexDocumentChangeType.Modified,
-                        });
-                    }
+                    // The same document changed in several sources produces a single change;
+                    // the winning content is chosen at indexing time
+                    allChanges.AddRange(changes.Where(x => seenDocumentIds.Add(x.DocumentId)));
                 }
             }
         });
@@ -89,6 +70,27 @@ public partial class SanityContentProvider(
             TotalCount = ordered.Count,
             Results = ordered.Skip(criteria.Skip).Take(criteria.Take).ToList(),
         };
+    }
+
+    private static string GetSourcesKey(SanityProject project)
+    {
+        return $"{project.ProjectId}:{string.Join("|", project.Datasets.Select(x => $"{x.Name}:{string.Join(",", x.DocumentTypes)}"))}";
+    }
+
+    private async Task<List<IndexDocumentChange>> GetChangesAsync(SanityProject project, SanityDataset dataset, PageChangesSearchCriteria criteria)
+    {
+        var query = BuildChangesQuery(dataset.DocumentTypes, criteria.StartDate, criteria.EndDate);
+        var response = await apiClient.QueryAsync(project.ProjectId, dataset.Name, project.ApiToken, query);
+
+        return response.Results
+            .Where(doc => doc["_id"] != null)
+            .Select(doc => new IndexDocumentChange
+            {
+                DocumentId = doc["_id"].ToString(),
+                ChangeDate = doc["_updatedAt"]?.ToObject<DateTime?>() ?? DateTime.UtcNow,
+                ChangeType = IndexDocumentChangeType.Modified,
+            })
+            .ToList();
     }
 
     /// <summary>
@@ -230,27 +232,9 @@ public partial class SanityContentProvider(
                 var query = $"*[{BuildTypeFilter(dataset.DocumentTypes)} && _id in [{idsFilter}]]";
                 var response = await apiClient.QueryAsync(project.ProjectId, dataset.Name, project.ApiToken, query, cancellationToken);
 
-                var datasetDocuments = new List<JObject>();
-
-                foreach (var document in response.Results)
-                {
-                    var documentId = document["_id"]?.ToString();
-                    if (documentId == null)
-                    {
-                        continue;
-                    }
-
-                    if (winningDocuments.TryGetValue(documentId, out var winner))
-                    {
-                        logger.LogWarning(
-                            "Sanity conflict in store '{StoreId}': document '{DocumentId}' exists in project '{WinningProjectId}' dataset '{WinningDataset}' and in project '{ConflictingProjectId}' dataset '{ConflictingDataset}'. The document from the higher-priority source wins.",
-                            storeId, documentId, winner.ProjectId, winner.Dataset, project.ProjectId, dataset.Name);
-                        continue;
-                    }
-
-                    winningDocuments.Add(documentId, (document, project.ProjectId, dataset.Name));
-                    datasetDocuments.Add(document);
-                }
+                var datasetDocuments = response.Results
+                    .Where(document => TryAddWinner(winningDocuments, document, storeId, project.ProjectId, dataset.Name))
+                    .ToList();
 
                 if (datasetDocuments.Count > 0)
                 {
@@ -260,6 +244,30 @@ public partial class SanityContentProvider(
         }
 
         return winningDocuments.Values.Select(x => x.Document).ToList();
+    }
+
+    // Sources are queried in priority order, so the first source that returns a document wins;
+    // a later one returning the same id is a conflict and is logged
+    private bool TryAddWinner(
+        Dictionary<string, (JObject Document, string ProjectId, string Dataset)> winningDocuments,
+        JObject document, string storeId, string projectId, string dataset)
+    {
+        var documentId = document["_id"]?.ToString();
+        if (documentId == null)
+        {
+            return false;
+        }
+
+        if (winningDocuments.TryGetValue(documentId, out var winner))
+        {
+            logger.LogWarning(
+                "Sanity conflict in store '{StoreId}': document '{DocumentId}' exists in project '{WinningProjectId}' dataset '{WinningDataset}' and in project '{ConflictingProjectId}' dataset '{ConflictingDataset}'. The document from the higher-priority source wins.",
+                storeId, documentId, winner.ProjectId, winner.Dataset, projectId, dataset);
+            return false;
+        }
+
+        winningDocuments.Add(documentId, (document, projectId, dataset));
+        return true;
     }
 
     private static string BuildChangesQuery(IList<string> documentTypes, DateTime? startDate, DateTime? endDate)
@@ -361,55 +369,72 @@ public partial class SanityContentProvider(
 
     private List<SanityProject> GetProjects(Dictionary<string, ObjectSettingEntry> settings, string storeId, ILogger configurationLogger)
     {
-        var projects = new List<SanityProject>();
+        var defaultApiToken = ResolveSecrets(GetSettingValue<string>(settings, ModuleConstants.Settings.General.ApiToken.Name), storeId, configurationLogger);
 
+        var projects = GetConfiguredProjects(settings, storeId, defaultApiToken, configurationLogger);
+        if (projects.Count > 0)
+        {
+            return projects;
+        }
+
+        var legacyProject = GetLegacyProject(settings, defaultApiToken);
+        return legacyProject != null ? [legacyProject] : [];
+    }
+
+    // Projects from the Sanity.Projects JSON setting; empty when the setting is empty or invalid
+    private List<SanityProject> GetConfiguredProjects(Dictionary<string, ObjectSettingEntry> settings, string storeId, string defaultApiToken, ILogger configurationLogger)
+    {
         var rawProjects = settings.TryGetValue(ModuleConstants.Settings.General.Projects.Name, out var entry)
             ? entry?.Value?.ToString()
             : null;
 
-        var defaultApiToken = ResolveSecrets(GetSettingValue<string>(settings, ModuleConstants.Settings.General.ApiToken.Name), storeId, configurationLogger);
-
-        if (!string.IsNullOrWhiteSpace(rawProjects))
+        if (string.IsNullOrWhiteSpace(rawProjects))
         {
-            try
-            {
-                var configuredProjects = JsonConvert.DeserializeObject<List<SanityProject>>(rawProjects) ?? [];
-
-                // A null entry ("[null]") is skipped like any other invalid one
-                projects.AddRange(configuredProjects.Where(project => project != null && TryPrepareProject(project, settings, storeId, defaultApiToken, configurationLogger)));
-            }
-            catch (JsonException ex)
-            {
-                configurationLogger.LogWarning(ex,
-                    "Store '{StoreId}': the '{SettingName}' setting contains invalid JSON. Falling back to the single project from the '{ProjectIdSettingName}' setting.",
-                    storeId, ModuleConstants.Settings.General.Projects.Name, ModuleConstants.Settings.General.ProjectId.Name);
-            }
+            return [];
         }
 
-        if (projects.Count == 0)
+        try
         {
-            // Legacy single-project configuration from the ProjectId, Dataset and DocumentTypes settings
-            var projectId = GetSettingValue<string>(settings, ModuleConstants.Settings.General.ProjectId.Name);
-            if (!string.IsNullOrEmpty(projectId) && !string.IsNullOrEmpty(defaultApiToken))
-            {
-                var dataset = GetSettingValue<string>(settings, ModuleConstants.Settings.General.Dataset.Name);
-                projects.Add(new SanityProject
+            var configuredProjects = JsonConvert.DeserializeObject<List<SanityProject>>(rawProjects) ?? [];
+
+            // A null entry ("[null]") is skipped like any other invalid one
+            return configuredProjects
+                .Where(project => project != null && TryPrepareProject(project, settings, storeId, defaultApiToken, configurationLogger))
+                .ToList();
+        }
+        catch (JsonException ex)
+        {
+            configurationLogger.LogWarning(ex,
+                "Store '{StoreId}': the '{SettingName}' setting contains invalid JSON. Falling back to the single project from the '{ProjectIdSettingName}' setting.",
+                storeId, ModuleConstants.Settings.General.Projects.Name, ModuleConstants.Settings.General.ProjectId.Name);
+            return [];
+        }
+    }
+
+    // Legacy single-project configuration from the ProjectId, Dataset and DocumentTypes settings
+    private static SanityProject GetLegacyProject(Dictionary<string, ObjectSettingEntry> settings, string defaultApiToken)
+    {
+        var projectId = GetSettingValue<string>(settings, ModuleConstants.Settings.General.ProjectId.Name);
+        if (string.IsNullOrEmpty(projectId) || string.IsNullOrEmpty(defaultApiToken))
+        {
+            return null;
+        }
+
+        var dataset = GetSettingValue<string>(settings, ModuleConstants.Settings.General.Dataset.Name);
+
+        return new SanityProject
+        {
+            ProjectId = projectId,
+            ApiToken = defaultApiToken,
+            Datasets =
+            [
+                new SanityDataset
                 {
-                    ProjectId = projectId,
-                    ApiToken = defaultApiToken,
-                    Datasets =
-                    [
-                        new SanityDataset
-                        {
-                            Name = string.IsNullOrEmpty(dataset) ? DefaultDatasetName : dataset,
-                            DocumentTypes = GetDocumentTypes(settings),
-                        },
-                    ],
-                });
-            }
-        }
-
-        return projects;
+                    Name = string.IsNullOrEmpty(dataset) ? DefaultDatasetName : dataset,
+                    DocumentTypes = GetDocumentTypes(settings),
+                },
+            ],
+        };
     }
 
     // Validates a deserialized project and normalizes it for querying: fills the default API token,
