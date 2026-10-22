@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
@@ -8,6 +9,7 @@ using VirtoCommerce.Pages.Core.Events;
 using VirtoCommerce.Pages.Core.Models;
 using VirtoCommerce.Platform.Core.Common;
 using VirtoCommerce.Platform.Core.Events;
+using VirtoCommerce.Sanity.Core;
 using VirtoCommerce.Sanity.Core.Services;
 using VirtoCommerce.Sanity.Data.ContentProviders;
 using VirtoCommerce.Sanity.Web.Filters;
@@ -40,22 +42,33 @@ public class SanityController(
         [FromHeader(Name = "sanity-document-id")] string documentId,
         [FromBody] JObject body)
     {
+        // The signature covers the body only, not the sanity-* headers. Values the webhook projection
+        // puts in the body therefore take precedence, and a header contradicting them is rejected:
+        // otherwise a replayed delivery could be pointed at another document or turned into a delete.
+        if (!TryUseSignedValue(body, "operation", "sanity-operation", ref operation) ||
+            !TryUseSignedValue(body, "_id", "sanity-document-id", ref documentId) ||
+            !TryUseSignedValue(body, "projectId", "sanity-project-id", ref projectId) ||
+            !TryUseSignedValue(body, "dataset", "sanity-dataset", ref dataset))
+        {
+            return BadRequest();
+        }
+
         var pageOperation = sanityConverter.GetPageOperation(operation);
         if (pageOperation == PageOperation.Unknown)
         {
             return Ok();
         }
 
-        // Sanity names the changed document in a header, so the payload projection may be empty
-        if (string.IsNullOrEmpty(documentId))
-        {
-            documentId = body?["_id"]?.ToString();
-        }
-
         if (string.IsNullOrEmpty(documentId))
         {
             logger.LogWarning("Sanity webhook notification carries no document id, nothing to index.");
             return Ok();
+        }
+
+        if (!SanityIdentifier.IsValid(documentId))
+        {
+            logger.LogWarning("Sanity webhook notification rejected: '{DocumentId}' is not a valid Sanity document id.", documentId);
+            return BadRequest();
         }
 
         var pageDocuments = await GetPageDocumentsAsync(documentId, projectId, dataset, cultureName, pageOperation, body);
@@ -108,5 +121,30 @@ public class SanityController(
         }
 
         return pageDocuments;
+    }
+
+    /// <summary>
+    /// Replaces a header value with the same value from the signed body when the body carries it.
+    /// Returns false when both are present and differ.
+    /// </summary>
+    private bool TryUseSignedValue(JObject body, string bodyPropertyName, string headerName, ref string value)
+    {
+        var signedValue = body?[bodyPropertyName]?.ToString();
+        if (string.IsNullOrEmpty(signedValue))
+        {
+            return true;
+        }
+
+        // Ordinal: Sanity document ids are case-sensitive
+        if (!string.IsNullOrEmpty(value) && !string.Equals(value, signedValue, StringComparison.Ordinal))
+        {
+            logger.LogWarning(
+                "Sanity webhook notification rejected: the '{HeaderName}' header '{HeaderValue}' does not match '{PropertyName}' '{SignedValue}' in the signed payload.",
+                headerName, value, bodyPropertyName, signedValue);
+            return false;
+        }
+
+        value = signedValue;
+        return true;
     }
 }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
+using VirtoCommerce.Sanity.Core;
 using VirtoCommerce.Sanity.Core.Services;
 
 namespace VirtoCommerce.Sanity.Data.Services;
@@ -119,10 +120,11 @@ public class SanityLinkResolver(ISanityApiClient apiClient)
             .Where(IsReference);
     }
 
+    // Referenced ids are interpolated into a GROQ filter, so a reference with a malformed id is left untouched
     private static bool IsReference(JObject candidate)
     {
         return candidate["_type"]?.ToString() == "reference" &&
-               !string.IsNullOrEmpty(GetReferencedId(candidate));
+               SanityIdentifier.IsValid(GetReferencedId(candidate));
     }
 
     private static bool IsAssetReference(JObject reference)

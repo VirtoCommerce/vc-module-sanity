@@ -109,6 +109,18 @@ public partial class SanityContentProvider(
         var result = new List<PageDocument>();
         var processedIds = new HashSet<string>();
 
+        var invalidIds = ids.Where(id => !SanityIdentifier.IsValid(id)).ToList();
+        if (invalidIds.Count > 0)
+        {
+            logger.LogWarning("Sanity document ids {DocumentIds} are not valid Sanity identifiers and are skipped.", invalidIds);
+            ids = ids.Except(invalidIds).ToList();
+        }
+
+        if (ids.Count == 0)
+        {
+            return result;
+        }
+
         await ForEachStoreAsync(async (projects, sourceStoreId) =>
         {
             var remainingIds = ids.Where(id => !processedIds.Contains(id)).ToList();
@@ -463,9 +475,10 @@ public partial class SanityContentProvider(
 
     private static string[] NormalizeDocumentTypes(IEnumerable<string> documentTypes)
     {
+        // Types are interpolated into GROQ filters, so a value outside the identifier charset is dropped
         return documentTypes
             .Select(type => type?.Trim())
-            .Where(type => !string.IsNullOrEmpty(type))
+            .Where(SanityIdentifier.IsValid)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
     }

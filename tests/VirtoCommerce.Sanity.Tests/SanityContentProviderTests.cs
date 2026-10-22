@@ -256,6 +256,52 @@ public class SanityContentProviderTests
     }
 
     [Fact]
+    public async Task GetByIdsAsync_IdWithGroqSyntax_IsSkippedAndNotPutIntoQuery()
+    {
+        var apiClient = new FakeSanityApiClient();
+        apiClient.ResultsByDataset["production"] = [CreatePageDocument("page-1", "Page")];
+
+        var logger = new InMemoryLogger();
+        var provider = CreateProvider(apiClient, logger, []);
+
+        var result = await provider.GetByIdsAsync(["page-1", "x\"] || _type == \"secret"]);
+
+        Assert.Single(result);
+        var request = Assert.Single(apiClient.Requests);
+        Assert.Contains("\"page-1\"", request.Query);
+        Assert.DoesNotContain("secret", request.Query);
+        Assert.Single(logger.Entries, x => x.Level == LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task GetByIdsAsync_OnlyInvalidIds_SanityIsNotQueried()
+    {
+        var apiClient = new FakeSanityApiClient();
+        var provider = CreateProvider(apiClient, new InMemoryLogger(), []);
+
+        var result = await provider.GetByIdsAsync(["\"", "page-1\n"]);
+
+        Assert.Empty(result);
+        Assert.Empty(apiClient.Requests);
+    }
+
+    [Fact]
+    public async Task GetByIdsAsync_DocumentTypeWithGroqSyntax_IsDropped()
+    {
+        var apiClient = new FakeSanityApiClient();
+        var provider = CreateProvider(apiClient, new InMemoryLogger(), new Dictionary<string, object>
+        {
+            [ModuleConstants.Settings.General.DocumentTypes.Name] = "page,x\" || true || \"",
+        });
+
+        await provider.GetByIdsAsync(["page-1"]);
+
+        var request = Assert.Single(apiClient.Requests);
+        Assert.Contains("_type == \"page\"", request.Query);
+        Assert.DoesNotContain("true", request.Query);
+    }
+
+    [Fact]
     public async Task SearchChangesAsync_SameDocumentChangedInSeveralDatasets_ProducesSingleChange()
     {
         var apiClient = new FakeSanityApiClient();

@@ -53,6 +53,29 @@ public class SanityLinkResolverTests
     }
 
     [Fact]
+    public async Task ResolveLinksAsync_ReferenceWithMalformedId_IsNotPutIntoQuery()
+    {
+        var apiClient = new FakeSanityApiClient();
+        var resolver = new SanityLinkResolver(apiClient);
+
+        var document = JObject.Parse("""
+        {
+            "_id": "page-1",
+            "_type": "page",
+            "good": { "_type": "reference", "_ref": "page-about" },
+            "bad": { "_type": "reference", "_ref": "x\"] || _type == \"secret" }
+        }
+        """);
+
+        await resolver.ResolveLinksAsync("project", "production", "token", [document]);
+
+        var query = Assert.Single(apiClient.Queries);
+        Assert.Contains("\"page-about\"", query);
+        Assert.DoesNotContain("secret", query);
+        Assert.Null(document.SelectToken("bad.slug"));
+    }
+
+    [Fact]
     public async Task ResolveLinksAsync_AddsCdnUrlToAssetReferencesWithoutQueryingApi()
     {
         var apiClient = new FakeSanityApiClient();
