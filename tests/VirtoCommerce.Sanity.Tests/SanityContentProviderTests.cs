@@ -320,6 +320,49 @@ public class SanityContentProviderTests
     }
 
     [Fact]
+    public async Task GetByIdsAsync_TokenReferencesConfiguredSecret_SecretIsSentToSanity()
+    {
+        var apiClient = new FakeSanityApiClient();
+        var options = new SanityOptions { Secrets = new() { ["projectAToken"] = "sk-secret" } };
+        var provider = CreateProvider(apiClient, new InMemoryLogger(), new Dictionary<string, Dictionary<string, object>>
+        {
+            [StoreId] = new()
+            {
+                [ModuleConstants.Settings.General.Projects.Name] = """[{ "projectId": "projA", "apiToken": "${projectAToken}" }]""",
+            },
+        }, out _, options);
+
+        await provider.GetByIdsAsync(["page-1"]);
+
+        Assert.Equal("sk-secret", Assert.Single(apiClient.Requests).ApiToken);
+    }
+
+    [Fact]
+    public async Task GetByIdsAsync_TokenReferencesUnknownSecret_ProjectIsSkippedWithWarning()
+    {
+        var apiClient = new FakeSanityApiClient();
+        var logger = new InMemoryLogger();
+        var provider = CreateProvider(apiClient, logger, new Dictionary<string, Dictionary<string, object>>
+        {
+            [StoreId] = new()
+            {
+                [ModuleConstants.Settings.General.Projects.Name] = """
+                [
+                    { "projectId": "projA", "apiToken": "${missing}" },
+                    { "projectId": "projB" }
+                ]
+                """,
+            },
+        }, out _);
+
+        await provider.GetByIdsAsync(["page-1"]);
+
+        Assert.Equal("projB", Assert.Single(apiClient.Requests).ProjectId);
+        Assert.DoesNotContain(apiClient.Requests, x => x.ApiToken.Contains("${"));
+        Assert.Contains(logger.Entries, x => x.Level == LogLevel.Warning && x.Message.Contains("missing"));
+    }
+
+    [Fact]
     public async Task GetStoreIdsAsync_ReturnsEnabledStoresConfiguredForSource()
     {
         var provider = CreateProvider(new FakeSanityApiClient(), new InMemoryLogger(), new Dictionary<string, Dictionary<string, object>>
@@ -381,7 +424,8 @@ public class SanityContentProviderTests
         FakeSanityApiClient apiClient,
         InMemoryLogger logger,
         Dictionary<string, Dictionary<string, object>> settingValuesByStore,
-        out List<string> readStoreIds)
+        out List<string> readStoreIds,
+        SanityOptions sanityOptions = null)
     {
         var storeIdsReadSettings = new List<string>();
         readStoreIds = storeIdsReadSettings;
@@ -423,7 +467,7 @@ public class SanityContentProviderTests
             new SanityLinkResolver(apiClient),
             storeSearchService.Object,
             settingsManager.Object,
-            Options.Create(new SanityOptions()),
+            Options.Create(sanityOptions ?? new SanityOptions()),
             logger);
     }
 

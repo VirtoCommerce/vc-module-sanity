@@ -29,7 +29,12 @@ public class SanityConverter : ISanityConverter
     public virtual PageDocument GetPageDocument(string storeId, string cultureName, PageOperation pageOperation, JObject body, HttpRequest request)
     {
         // Webhook notifications may carry only ids or a partial projection, so every field is read defensively
-        var documentId = body?["_id"]?.ToString();
+        if (body == null)
+        {
+            return null;
+        }
+
+        var documentId = body["_id"]?.ToString();
 
         if (documentId.IsNullOrEmpty() ||
             body["_type"]?.ToString().EqualsIgnoreCase("system.release") == true)

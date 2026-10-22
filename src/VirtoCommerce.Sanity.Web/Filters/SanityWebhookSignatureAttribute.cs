@@ -73,14 +73,14 @@ public sealed partial class SanityWebhookSignatureAttribute : Attribute, IAsyncR
             return $"the '{SignatureHeaderName}' header is malformed";
         }
 
-        var timestampText = match.Groups[1].Value;
+        var timestampText = match.Groups["timestamp"].Value;
         if (!long.TryParse(timestampText, out var timestamp) || timestamp < MinimumTimestamp)
         {
             return "the signature timestamp is invalid";
         }
 
         var age = Math.Abs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - timestamp);
-        if (age > options.WebhookToleranceSeconds * 1000L)
+        if (age > TimeSpan.FromSeconds(options.WebhookToleranceSeconds).TotalMilliseconds)
         {
             return "the signature timestamp is outside the allowed time window";
         }
@@ -88,7 +88,7 @@ public sealed partial class SanityWebhookSignatureAttribute : Attribute, IAsyncR
         byte[] expectedSignature;
         try
         {
-            expectedSignature = Base64Url.DecodeFromChars(match.Groups[2].Value);
+            expectedSignature = Base64Url.DecodeFromChars(match.Groups["signature"].Value);
         }
         catch (FormatException)
         {
@@ -164,6 +164,6 @@ public sealed partial class SanityWebhookSignatureAttribute : Attribute, IAsyncR
         }
     }
 
-    [GeneratedRegex(@"^t=(\d+)[, ]+v1=([^, ]+)$")]
+    [GeneratedRegex(@"^t=(?<timestamp>\d+)[, ]+v1=(?<signature>[^, ]+)$")]
     private static partial Regex SignatureHeaderRegex();
 }

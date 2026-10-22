@@ -359,13 +359,7 @@ public partial class SanityContentProvider(
             {
                 var configuredProjects = JsonConvert.DeserializeObject<List<SanityProject>>(rawProjects) ?? [];
 
-                foreach (var project in configuredProjects)
-                {
-                    if (TryPrepareProject(project, settings, storeId, defaultApiToken))
-                    {
-                        projects.Add(project);
-                    }
-                }
+                projects.AddRange(configuredProjects.Where(project => TryPrepareProject(project, settings, storeId, defaultApiToken)));
             }
             catch (JsonException ex)
             {
@@ -462,20 +456,12 @@ public partial class SanityContentProvider(
             return value;
         }
 
-        string missingSecretName = null;
+        var secrets = options.Value.Secrets;
 
-        var result = SecretReferenceRegex().Replace(value, match =>
-        {
-            var name = match.Groups[1].Value;
-
-            if (options.Value.Secrets.TryGetValue(name, out var secret) && !string.IsNullOrEmpty(secret))
-            {
-                return secret;
-            }
-
-            missingSecretName ??= name;
-            return string.Empty;
-        });
+        var missingSecretName = SecretReferenceRegex()
+            .Matches(value)
+            .Select(match => match.Groups[1].Value)
+            .FirstOrDefault(name => !secrets.TryGetValue(name, out var secret) || string.IsNullOrEmpty(secret));
 
         if (missingSecretName != null)
         {
@@ -485,7 +471,7 @@ public partial class SanityContentProvider(
             return null;
         }
 
-        return result;
+        return SecretReferenceRegex().Replace(value, match => secrets[match.Groups[1].Value]);
     }
 
     private static string[] GetDocumentTypes(Dictionary<string, ObjectSettingEntry> settings)
