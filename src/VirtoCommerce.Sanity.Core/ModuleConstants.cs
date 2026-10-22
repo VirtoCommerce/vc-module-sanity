@@ -46,7 +46,6 @@ public static class ModuleConstants
                 Name = $"{GroupName}.ProjectId",
                 GroupName = $"CMS|{GroupName}",
                 ValueType = SettingValueType.ShortText,
-                IsPublic = true,
                 DefaultValue = string.Empty,
             };
 
@@ -55,7 +54,6 @@ public static class ModuleConstants
                 Name = $"{GroupName}.Dataset",
                 GroupName = $"CMS|{GroupName}",
                 ValueType = SettingValueType.ShortText,
-                IsPublic = true,
                 DefaultValue = "production",
             };
 
