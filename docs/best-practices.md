@@ -116,7 +116,7 @@ Use `visibility` (`Public` / `Private`) and `userGroups` for access control inst
 
 **Do not expose project tokens to the browser.** Content reaches the storefront through the indexed `PageDocument`, so the theme never needs a Sanity token. CDN asset URLs are public by design — a private dataset's assets are not, and are not a fit for storefront rendering.
 
-**Restrict webhook delivery.** The webhook endpoint acts under a Virto Commerce API key with `sanity:update` and `sanity:delete` permissions; give that account nothing else.
+**Sign webhook deliveries and keep the routing values signed.** The webhook endpoint takes no API key: it accepts only requests signed with a secret from `Sanity:WebhookSecrets`. Use a separate secret per webhook, rotate it by adding the new one before removing the old, and use the projection recommended in the README so the document id, operation, project and dataset are covered by the signature.
 
 ## Studio ergonomics
 

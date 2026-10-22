@@ -94,7 +94,7 @@ A store can fetch and index documents from several datasets and several Sanity p
 [
   {
     "projectId": "abc12345",
-    "apiToken": "sk...",
+    "apiToken": "${projectAToken}",
     "datasets": [
       { "name": "production", "documentTypes": ["page", "footerNavigation"], "isPriority": true },
       { "name": "marketing", "documentTypes": ["landing", "blog"] }
@@ -196,6 +196,7 @@ Webhook secrets and Sanity API tokens are read from configuration, not from the 
   "Sanity": {
     "WebhookSecrets": [ "<secret from the Sanity webhook>" ],
     "WebhookToleranceSeconds": 300,
+    "WebhookMaxBodySize": 10485760,
     "Secrets": {
       "projectAToken": "sk...",
       "projectBToken": "sk..."
@@ -207,7 +208,8 @@ Webhook secrets and Sanity API tokens are read from configuration, not from the 
 | Key | Description | Default |
 |---|---|---|
 | `Sanity:WebhookSecrets` | Secrets accepted when validating a webhook signature. A request is accepted when it matches **any** of them, which covers several webhooks (one per project) and lets a secret be rotated without downtime: add the new one, switch Sanity over, then drop the old one. Empty means every webhook request is rejected. | `[]` |
-| `Sanity:WebhookToleranceSeconds` | How far a webhook timestamp may be from the current time. Guards against replay. | `300` |
+| `Sanity:WebhookToleranceSeconds` | How far a webhook timestamp may be from the current time. Guards against replay. 1 to 86400. | `300` |
+| `Sanity:WebhookMaxBodySize` | Largest webhook body accepted, in bytes. The body is read to check its signature before the request is authenticated, so this bounds what an anonymous caller can make the server buffer. 1 KB to 100 MB. | `10485760` (10 MB) |
 | `Sanity:Secrets` | Named API tokens referenced as `${name}` from the **Sanity.Projects** store setting. Names are case-insensitive. | `{}` |
 
 ### Referencing secrets from store settings
@@ -248,6 +250,8 @@ services:
       - Sanity__Secrets__projectAToken=sk...
 ```
 
+The options are validated at startup: an out-of-range value stops the platform from starting instead of failing the first webhook delivery.
+
 Environment variables override `appsettings.json`, so keep the file free of real secrets and inject them per environment (or from a secret store such as Azure Key Vault). In local development use `dotnet user-secrets` instead of editing the file.
 
 ## Webhook Configuration
@@ -266,29 +270,56 @@ To connect Sanity to this endpoint, configure webhooks in [Sanity Manage](https:
 | **Secret** | any strong random string; the same value goes into `Sanity:WebhookSecrets` |
 | **Trigger on** | `Create, Update, Delete` |
 | **HTTP method** | `POST` |
-| **Projection** | leave empty — the module works from the headers (see below) |
+| **Projection** | the recommended projection below |
+
+Recommended projection:
+
+```groq
+{
+  _id,
+  storeId,
+  "operation": delta::operation(),
+  "projectId": sanity::projectId(),
+  "dataset": sanity::dataset()
+}
+```
+
+It is small, so deliveries stay well within Sanity's payload limits, and it puts every value that steers the module inside the signed body (see [Signed values take precedence over headers](#signed-values-take-precedence-over-headers)).
 
 ### The payload is a notification, not content
 
-The webhook tells the module **which** document changed; it is never indexed as-is. Sanity names the change in its request headers, and the module works from those:
+The webhook tells the module **which** document changed; it is never indexed as-is. The module reads the change from these values:
 
-| Header | Used for |
-|---|---|
-| `sanity-document-id` | the document to fetch |
-| `sanity-project-id` | the project to fetch it from |
-| `sanity-dataset` | the dataset to fetch it from |
-| `sanity-operation` | `create` / `update` / `delete` |
-| `sanity-webhook-signature` | authentication (see [Authorization](#authorization)) |
+| Body property | Header | Used for |
+|---|---|---|
+| `_id` | `sanity-document-id` | the document to fetch |
+| `projectId` | `sanity-project-id` | the project to fetch it from |
+| `dataset` | `sanity-dataset` | the dataset to fetch it from |
+| `operation` | `sanity-operation` | `create` / `update` / `delete` |
+| `storeId` | — | the store of a deleted document (optional) |
+| — | `sanity-webhook-signature` | authentication (see [Authorization](#authorization)) |
 
 On create and update the module fetches that document from that project and dataset, and enriches it exactly as index rebuild does — resolved internal links and asset URLs included. The indexed content is therefore identical no matter what triggered it, and a partial or reordered webhook payload cannot put half-built content into the index.
 
 Consequences for configuration:
 
-* **The projection can be empty.** Everything the module needs is in the headers, so there is no reason to ship the document body; an empty projection keeps deliveries small and avoids Sanity's payload size limits on large documents. A payload is still accepted — `_id` is read from it when the header is absent.
+* **Do not ship the document body.** The document is refetched anyway, so a projection of the whole document only makes deliveries larger and can hit Sanity's payload size limits on large documents. Use the recommended projection above.
 * **One webhook serves every store.** The endpoint takes no `storeId`: the module looks the document up in the stores whose configuration contains the project and dataset from the headers, and the store assignment follows that configuration (or the document's own `storeId` field). A page document is identified by its Sanity `_id`, so a document reachable from several stores is indexed once, for the first store whose sources contain it — exactly as index rebuild treats it. To target a specific store, set the document's `storeId` field.
 * **The notification's own project wins.** Because the lookup is scoped by `sanity-project-id` and `sanity-dataset`, the same document id living in another project or dataset is irrelevant here: no cross-source conflict resolution takes place, and no other project is queried. Index rebuild, which has no such hint, still resolves conflicts by priority.
 * **The project and document type must be configured.** A webhook naming a project absent from every store's **Sanity.Projects**, or a document whose type is not listed for that dataset, fetches nothing; a warning naming the document, project and dataset is written to the platform log.
-* **Deletes are the exception.** A deleted document can no longer be fetched, so the module publishes the delete straight from the id in the header.
+* **Deletes are the exception.** A deleted document can no longer be fetched, so the module publishes the delete straight from its id. The event carries the `storeId` from the payload when the projection includes it; otherwise the module publishes one delete event per store whose configuration contains the project and dataset, so delete handlers still see the store.
+
+### Signed values take precedence over headers
+
+The signature covers the request body only — Sanity does not sign its `sanity-*` headers. A captured delivery replayed within the tolerance window could therefore carry altered headers: another document id, or `delete` instead of `update`. To close this, values from the signed body take precedence:
+
+* when the body carries `_id`, `operation`, `projectId` or `dataset`, that value is used;
+* when the matching header is also present and differs, the request is rejected with `400 Bad Request` and a warning is logged;
+* a header is used only for a value the body does not carry.
+
+With the recommended projection every value that steers the module is signed, so the headers are not trusted at all. A webhook with an empty projection keeps working from the headers alone, but without this protection.
+
+Independently of the signature, a document id that is not a valid Sanity identifier (letters, digits, `_`, `-`, `.`) is rejected with `400 Bad Request` before it reaches any GROQ query. The same check applies to referenced ids during link resolution and to document types from the settings.
 
 ### Authorization
 
@@ -299,11 +330,25 @@ Sanity signs every delivery with the secret from the webhook's **Secret** field 
 * no secret is configured in `Sanity:WebhookSecrets` — **an unconfigured module accepts nothing**;
 * the header is missing or malformed;
 * the timestamp is outside `Sanity:WebhookToleranceSeconds` (5 minutes by default), which blocks replays;
+* the body is larger than `Sanity:WebhookMaxBodySize`;
 * the signature matches none of the configured secrets.
 
 Every rejection is written to the platform log with its reason. See [Configuration](#configuration) for where to put the secret.
 
 You can verify webhook delivery in Sanity Manage → Webhooks → **Your webhook** → **...** → **Show attempt log**.
+
+## Upgrading from the API key webhook
+
+Earlier versions authorized the webhook by a platform API key in its URL and took the store from a `storeId` query parameter. After the upgrade **the endpoint rejects every notification until a secret is configured**, and content is refreshed only by a full reindex. For each existing webhook:
+
+1. Generate a strong random secret and set it in the webhook's **Secret** field in Sanity Manage.
+2. Add the same value to `Sanity:WebhookSecrets` (environment variable `Sanity__WebhookSecrets__0`) and restart the platform.
+3. Remove `api_key` and `storeId` from the webhook URL; keep `cultureName` if you use it.
+4. Replace the projection with the [recommended one](#webhook-configuration).
+5. Make sure every store that should receive the content lists the project and dataset in **Sanity.Projects** (or **Sanity.ProjectId** / **Sanity.Dataset**): the store is now resolved from that configuration or the document's `storeId` field.
+6. Save a document in the Studio and check the attempt log in Sanity and the platform log for `Sanity webhook request rejected` warnings.
+
+The platform API key used by the old webhook is no longer needed and can be revoked.
 
 ## License
 
