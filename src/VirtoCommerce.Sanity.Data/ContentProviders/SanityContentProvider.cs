@@ -107,23 +107,15 @@ public partial class SanityContentProvider(
         var result = new List<PageDocument>();
         var processedIds = new HashSet<string>();
 
-        var invalidIds = ids.Where(id => !SanityIdentifier.IsValid(id)).ToList();
-        if (invalidIds.Count > 0)
-        {
-            logger.LogWarning("Sanity document ids {DocumentIds} are not valid Sanity identifiers and are skipped.", invalidIds);
-            ids = ids.Except(invalidIds).ToList();
-        }
-
-        if (ids.Count == 0)
+        var validIds = GetValidIds(ids);
+        if (validIds.Count == 0)
         {
             return result;
         }
 
-        var distinctIdCount = ids.Distinct().Count();
-
         await ForEachStoreAsync(async (projects, sourceStoreId) =>
         {
-            var remainingIds = ids.Where(id => !processedIds.Contains(id)).ToList();
+            var remainingIds = validIds.Where(id => !processedIds.Contains(id)).ToList();
             var sources = FilterSources(projects, projectId, dataset);
 
             if (remainingIds.Count == 0 || sources.Count == 0)
@@ -133,32 +125,40 @@ public partial class SanityContentProvider(
 
             var documents = await GetDocumentsAsync(sources, sourceStoreId, remainingIds);
 
-            foreach (var doc in documents)
-            {
-                var docId = doc["_id"]?.ToString();
-                if (docId == null || !processedIds.Add(docId))
-                {
-                    continue;
-                }
-
-                var pageDocument = sanityConverter.GetPageDocument(sourceStoreId, null, Pages.Core.Events.PageOperation.Publish, doc, null);
-                if (pageDocument == null)
-                {
-                    continue;
-                }
-
-                if (pageDocument.StoreId.IsNullOrEmpty())
-                {
-                    pageDocument.StoreId = sourceStoreId;
-                }
-
-                result.Add(pageDocument);
-            }
+            // A document is taken from the first store that has it
+            result.AddRange(documents
+                .Where(doc => doc["_id"] != null && processedIds.Add(doc["_id"].ToString()))
+                .Select(doc => ToPageDocument(doc, sourceStoreId))
+                .Where(pageDocument => pageDocument != null));
         },
-        // A document is taken from the first store that has it, so the remaining stores need not be read
-        isDone: () => processedIds.Count >= distinctIdCount);
+        // so the remaining stores need not be read once every id is found
+        isDone: () => processedIds.Count >= validIds.Count);
 
         return result;
+    }
+
+    // Ids are interpolated into GROQ filters, so a value outside the identifier charset is dropped
+    private IList<string> GetValidIds(IList<string> ids)
+    {
+        var invalidIds = ids.Where(id => !SanityIdentifier.IsValid(id)).ToList();
+        if (invalidIds.Count > 0)
+        {
+            logger.LogWarning("Sanity document ids {DocumentIds} are not valid Sanity identifiers and are skipped.", invalidIds);
+        }
+
+        return ids.Except(invalidIds).Distinct().ToList();
+    }
+
+    private PageDocument ToPageDocument(JObject document, string sourceStoreId)
+    {
+        var pageDocument = sanityConverter.GetPageDocument(sourceStoreId, null, Pages.Core.Events.PageOperation.Publish, document, null);
+
+        if (pageDocument != null && pageDocument.StoreId.IsNullOrEmpty())
+        {
+            pageDocument.StoreId = sourceStoreId;
+        }
+
+        return pageDocument;
     }
 
     public virtual async Task<IList<string>> GetStoreIdsAsync(string projectId, string dataset)
@@ -366,7 +366,6 @@ public partial class SanityContentProvider(
                 logger.LogWarning(ex,
                     "Store '{StoreId}': the '{SettingName}' setting contains invalid JSON. Falling back to the single project from the '{ProjectIdSettingName}' setting.",
                     storeId, ModuleConstants.Settings.General.Projects.Name, ModuleConstants.Settings.General.ProjectId.Name);
-                projects.Clear();
             }
         }
 
