@@ -140,7 +140,7 @@ public partial class SanityContentProvider(
     }
 
     // Ids are interpolated into GROQ filters, so a value outside the identifier charset is dropped
-    private IList<string> GetValidIds(IList<string> ids)
+    private List<string> GetValidIds(IList<string> ids)
     {
         var invalidIds = ids.Where(id => !SanityIdentifier.IsValid(id)).ToList();
         if (invalidIds.Count > 0)
@@ -353,7 +353,7 @@ public partial class SanityContentProvider(
         await action(projects, storeId);
     }
 
-    private IList<SanityProject> GetProjects(Dictionary<string, ObjectSettingEntry> settings, string storeId, ILogger configurationLogger)
+    private List<SanityProject> GetProjects(Dictionary<string, ObjectSettingEntry> settings, string storeId, ILogger configurationLogger)
     {
         var projects = new List<SanityProject>();
 
