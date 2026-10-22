@@ -82,7 +82,7 @@ The content provider uses the [Sanity Content API (GROQ)](https://www.sanity.io/
 | **Sanity.ProjectId** | Sanity project ID | — |
 | **Sanity.Dataset** | Dataset name | `production` |
 | **Sanity.ApiToken** | API token (read access); also the default token for projects that carry no `apiToken` of their own in **Sanity.Projects**. Supports `${name}` secret references | — |
-| **Sanity.DocumentTypes** | Comma-separated list of document types to fetch and index | `page` |
+| **Sanity.DocumentTypes** | Comma-separated list of document types to fetch and index; when empty, **Sanity.PageType** is used, then `page` | empty |
 | **Sanity.Projects** | Single JSON setting describing all Sanity sources of the store: projects, their datasets, document types, and priority (see below) | `[]` |
 | **Sanity.PageType** | Legacy single document type; used only when **Sanity.DocumentTypes** is empty | `page` |
 
@@ -123,11 +123,11 @@ Dataset fields:
 |---|---|---|
 | `name` | yes | Dataset name; entries without it are skipped |
 | `documentTypes` | no | Array of document types fetched from this dataset; when empty, inherits the **Sanity.DocumentTypes** setting |
-| `isPriority` | no | Marks the dataset as the priority one: it is queried first, so its documents win on conflicts. Default: `false` |
+| `isPriority` | no | Marks the dataset as the priority one within its project: it is queried first, so its documents win on conflicts inside this store's sources. Default: `false` |
 
 When **Sanity.Projects** is empty, the module works with the single project from **Sanity.ProjectId**, **Sanity.Dataset**, and **Sanity.DocumentTypes** — existing configurations keep working unchanged.
 
-**Conflicts.** The same document id may exist in several sources (e.g. cloned datasets or projects). Sources are processed in priority order: projects in their configured order, and within a project the datasets marked with `isPriority` first, the rest in their configured order. On a conflict, the document from the higher-priority source is indexed, and a warning is always written to the platform log:
+**Conflicts.** The same document id may exist in several sources (e.g. cloned datasets or projects). Sources are processed in priority order: projects in their configured order, and within a project the datasets marked with `isPriority` first, the rest in their configured order. On a conflict, the document from the higher-priority source is indexed, and a warning is always written to the platform log. Priority applies within one store's sources: across stores, a document is taken from the first store (in store search order) whose sources contain it, before priority is considered.
 
 ```
 Sanity conflict in store 'B2B-store': document 'page-about' exists in project 'abc12345' dataset 'production' and in project 'abc12345' dataset 'draft'. The document from the higher-priority source wins.
@@ -278,11 +278,13 @@ Recommended projection:
 {
   _id,
   storeId,
-  "operation": delta::operation(),
-  "projectId": sanity::projectId(),
-  "dataset": sanity::dataset()
+  "_operation": delta::operation(),
+  "_projectId": sanity::projectId(),
+  "_dataset": sanity::dataset()
 }
 ```
+
+The routing keys start with `_` on purpose: Sanity reserves that prefix for its system fields, so a document field cannot have the same name, even in a projection that ships the whole document.
 
 It is small, so deliveries stay well within Sanity's payload limits, and it puts every value that steers the module inside the signed body (see [Signed values take precedence over headers](#signed-values-take-precedence-over-headers)).
 
@@ -293,9 +295,9 @@ The webhook tells the module **which** document changed; it is never indexed as-
 | Body property | Header | Used for |
 |---|---|---|
 | `_id` | `sanity-document-id` | the document to fetch |
-| `projectId` | `sanity-project-id` | the project to fetch it from |
-| `dataset` | `sanity-dataset` | the dataset to fetch it from |
-| `operation` | `sanity-operation` | `create` / `update` / `delete` |
+| `_projectId` | `sanity-project-id` | the project to fetch it from |
+| `_dataset` | `sanity-dataset` | the dataset to fetch it from |
+| `_operation` | `sanity-operation` | `create` / `update` / `delete` |
 | `storeId` | — | the store of a deleted document (optional) |
 | — | `sanity-webhook-signature` | authentication (see [Authorization](#authorization)) |
 
@@ -307,13 +309,14 @@ Consequences for configuration:
 * **One webhook serves every store.** The endpoint takes no `storeId`: the module looks the document up in the stores whose configuration contains the project and dataset from the headers, and the store assignment follows that configuration (or the document's own `storeId` field). A page document is identified by its Sanity `_id`, so a document reachable from several stores is indexed once, for the first store whose sources contain it — exactly as index rebuild treats it. To target a specific store, set the document's `storeId` field.
 * **The notification's own project wins.** Because the lookup is scoped by `sanity-project-id` and `sanity-dataset`, the same document id living in another project or dataset is irrelevant here: no cross-source conflict resolution takes place, and no other project is queried. Index rebuild, which has no such hint, still resolves conflicts by priority.
 * **The project and document type must be configured.** A webhook naming a project absent from every store's **Sanity.Projects**, or a document whose type is not listed for that dataset, fetches nothing; a warning naming the document, project and dataset is written to the platform log.
+* **The converter sees the fetched document.** `ISanityConverter.GetPageDocument` is called by the content provider for the document fetched from Sanity, with `cultureName` and `request` set to `null`; the controller applies `cultureName` from the query string afterwards. Only deletes still pass the webhook payload, `cultureName` and the request.
 * **Deletes are the exception.** A deleted document can no longer be fetched, so the module publishes the delete straight from its id. The event carries the `storeId` from the payload when the projection includes it; otherwise the module publishes one delete event per store whose configuration contains the project and dataset, so delete handlers still see the store.
 
 ### Signed values take precedence over headers
 
 The signature covers the request body only — Sanity does not sign its `sanity-*` headers. A captured delivery replayed within the tolerance window could therefore carry altered headers: another document id, or `delete` instead of `update`. To close this, values from the signed body take precedence:
 
-* when the body carries `_id`, `operation`, `projectId` or `dataset`, that value is used;
+* when the body carries `_id`, `_operation`, `_projectId` or `_dataset`, that value is used;
 * when the matching header is also present and differs, the request is rejected with `400 Bad Request` and a warning is logged;
 * a header is used only for a value the body does not carry.
 
@@ -330,7 +333,7 @@ Sanity signs every delivery with the secret from the webhook's **Secret** field 
 * no secret is configured in `Sanity:WebhookSecrets` — **an unconfigured module accepts nothing**;
 * the header is missing or malformed;
 * the timestamp is outside `Sanity:WebhookToleranceSeconds` (5 minutes by default), which blocks replays;
-* the body is larger than `Sanity:WebhookMaxBodySize`;
+* the body is larger than `Sanity:WebhookMaxBodySize`, or could not be read;
 * the signature matches none of the configured secrets.
 
 Every rejection is written to the platform log with its reason. See [Configuration](#configuration) for where to put the secret.
@@ -348,7 +351,13 @@ Earlier versions authorized the webhook by a platform API key in its URL and too
 5. Make sure every store that should receive the content lists the project and dataset in **Sanity.Projects** (or **Sanity.ProjectId** / **Sanity.Dataset**): the store is now resolved from that configuration or the document's `storeId` field.
 6. Save a document in the Studio and check the attempt log in Sanity and the platform log for `Sanity webhook request rejected` warnings.
 
-The platform API key used by the old webhook is no longer needed and can be revoked.
+The platform API key used by the old webhook is no longer needed and can be revoked. The `sanity:update` and `sanity:delete` permissions are still registered so that existing roles keep loading, but nothing checks them anymore.
+
+For code that extends the module:
+
+* The webhook resolves `ISanityContentProvider`, not `IPageContentProvider`. If you replaced the provider by registering a subclass of `SanityContentProvider` as `IPageContentProvider`, register it as `ISanityContentProvider` as well, otherwise the webhook keeps using the stock provider.
+* `ISanityApiClient.QueryAsync` takes a `CancellationToken`; custom implementations have to add the parameter.
+* An `ISanityConverter` override that reads `cultureName` or `request` in `GetPageDocument` receives `null` for create and update notifications (see above).
 
 ## License
 
