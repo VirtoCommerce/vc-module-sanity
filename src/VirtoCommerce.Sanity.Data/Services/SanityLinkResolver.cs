@@ -13,7 +13,7 @@ namespace VirtoCommerce.Sanity.Data.Services;
 /// with the relative link (permalink) of the referenced document, and every asset reference
 /// (image or file) gets a "url" property with its CDN URL.
 /// </summary>
-public class SanityLinkResolver(ISanityApiClient apiClient)
+public class SanityLinkResolver(ISanityApiClient apiClient) : ISanityLinkResolver
 {
     // The GROQ query is sent as a GET URL; keep batches small enough to stay within Sanity's URL length limit
     private const int ReferenceBatchSize = 100;

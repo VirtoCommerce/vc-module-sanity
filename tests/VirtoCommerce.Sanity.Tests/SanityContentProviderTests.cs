@@ -302,6 +302,40 @@ public class SanityContentProviderTests
     }
 
     [Fact]
+    public async Task GetByIdsAsync_AllIdsFoundInFirstStore_RemainingStoresAreNotRead()
+    {
+        var apiClient = new FakeSanityApiClient();
+        apiClient.ResultsByDataset["production"] = [CreatePageDocument("page-1", "Page")];
+
+        var provider = CreateProvider(apiClient, new InMemoryLogger(), new Dictionary<string, Dictionary<string, object>>
+        {
+            ["store1"] = [],
+            ["store2"] = [],
+        }, out var readStoreIds);
+
+        var result = await provider.GetByIdsAsync(["page-1", "page-1"], "project1", "production");
+
+        Assert.Equal("store1", Assert.Single(result).StoreId);
+        Assert.Equal(["store1"], readStoreIds.ToArray());
+    }
+
+    [Fact]
+    public async Task GetStoreIdsAsync_ReturnsEnabledStoresConfiguredForSource()
+    {
+        var provider = CreateProvider(new FakeSanityApiClient(), new InMemoryLogger(), new Dictionary<string, Dictionary<string, object>>
+        {
+            ["store1"] = [],
+            ["store2"] = new() { [ModuleConstants.Settings.General.ProjectId.Name] = "project2" },
+            ["store3"] = new() { [ModuleConstants.Settings.General.Enabled.Name] = false },
+            ["store4"] = new() { [ModuleConstants.Settings.General.Dataset.Name] = "staging" },
+        }, out _);
+
+        var storeIds = await provider.GetStoreIdsAsync("project1", "production");
+
+        Assert.Equal(["store1"], storeIds.ToArray());
+    }
+
+    [Fact]
     public async Task SearchChangesAsync_SameDocumentChangedInSeveralDatasets_ProducesSingleChange()
     {
         var apiClient = new FakeSanityApiClient();
@@ -340,28 +374,47 @@ public class SanityContentProviderTests
         InMemoryLogger logger,
         Dictionary<string, object> settingValues)
     {
-        settingValues.TryAdd(ModuleConstants.Settings.General.Enabled.Name, true);
-        settingValues.TryAdd(ModuleConstants.Settings.General.ProjectId.Name, "project1");
-        settingValues.TryAdd(ModuleConstants.Settings.General.ApiToken.Name, "token1");
+        return CreateProvider(apiClient, logger, new Dictionary<string, Dictionary<string, object>> { [StoreId] = settingValues }, out _);
+    }
+
+    private static SanityContentProvider CreateProvider(
+        FakeSanityApiClient apiClient,
+        InMemoryLogger logger,
+        Dictionary<string, Dictionary<string, object>> settingValuesByStore,
+        out List<string> readStoreIds)
+    {
+        var storeIdsReadSettings = new List<string>();
+        readStoreIds = storeIdsReadSettings;
+
+        foreach (var settingValues in settingValuesByStore.Values)
+        {
+            settingValues.TryAdd(ModuleConstants.Settings.General.Enabled.Name, true);
+            settingValues.TryAdd(ModuleConstants.Settings.General.ProjectId.Name, "project1");
+            settingValues.TryAdd(ModuleConstants.Settings.General.ApiToken.Name, "token1");
+        }
 
         var settingsManager = new Mock<ISettingsManager>();
         settingsManager
             .Setup(x => x.GetObjectSettingsAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<string>(), It.IsAny<string>()))
-            .ReturnsAsync((IEnumerable<string> names, string _, string _) => names
-                .Select(name => new ObjectSettingEntry
-                {
-                    Name = name,
-                    Value = settingValues.GetValueOrDefault(name),
-                })
-                .ToList());
+            .ReturnsAsync((IEnumerable<string> names, string _, string storeId) =>
+            {
+                storeIdsReadSettings.Add(storeId);
+                return names
+                    .Select(name => new ObjectSettingEntry
+                    {
+                        Name = name,
+                        Value = settingValuesByStore[storeId].GetValueOrDefault(name),
+                    })
+                    .ToList();
+            });
 
         var storeSearchService = new Mock<IStoreSearchService>();
         storeSearchService
             .Setup(x => x.SearchAsync(It.IsAny<StoreSearchCriteria>(), It.IsAny<bool>()))
             .ReturnsAsync(new StoreSearchResult
             {
-                TotalCount = 1,
-                Results = [new Store { Id = StoreId }],
+                TotalCount = settingValuesByStore.Count,
+                Results = settingValuesByStore.Keys.Select(x => new Store { Id = x }).ToList(),
             });
 
         return new SanityContentProvider(

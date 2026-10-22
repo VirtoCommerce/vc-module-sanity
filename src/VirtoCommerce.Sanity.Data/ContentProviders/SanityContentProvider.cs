@@ -7,14 +7,12 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using VirtoCommerce.Pages.Core.ContentProviders;
 using VirtoCommerce.Pages.Core.Models;
 using VirtoCommerce.Platform.Core.Common;
 using VirtoCommerce.Platform.Core.Settings;
 using VirtoCommerce.Sanity.Core;
 using VirtoCommerce.Sanity.Core.Models;
 using VirtoCommerce.Sanity.Core.Services;
-using VirtoCommerce.Sanity.Data.Services;
 using VirtoCommerce.SearchModule.Core.Model;
 using VirtoCommerce.StoreModule.Core.Model.Search;
 using VirtoCommerce.StoreModule.Core.Services;
@@ -24,12 +22,12 @@ namespace VirtoCommerce.Sanity.Data.ContentProviders;
 public partial class SanityContentProvider(
     ISanityApiClient apiClient,
     ISanityConverter sanityConverter,
-    SanityLinkResolver sanityLinkResolver,
+    ISanityLinkResolver sanityLinkResolver,
     IStoreSearchService storeSearchService,
     ISettingsManager settingsManager,
     IOptions<SanityOptions> options,
     ILogger<SanityContentProvider> logger)
-    : IPageContentProvider
+    : ISanityContentProvider
 {
     public string ProviderName => "Sanity";
     public bool SupportsReindexation => true;
@@ -104,7 +102,7 @@ public partial class SanityContentProvider(
     /// headers, which keeps the lookup to the source the notification came from instead of every
     /// configured one, and makes the same document id in another project irrelevant.
     /// </summary>
-    public async Task<IList<PageDocument>> GetByIdsAsync(IList<string> ids, string projectId, string dataset)
+    public virtual async Task<IList<PageDocument>> GetByIdsAsync(IList<string> ids, string projectId, string dataset)
     {
         var result = new List<PageDocument>();
         var processedIds = new HashSet<string>();
@@ -120,6 +118,8 @@ public partial class SanityContentProvider(
         {
             return result;
         }
+
+        var distinctIdCount = ids.Distinct().Count();
 
         await ForEachStoreAsync(async (projects, sourceStoreId) =>
         {
@@ -154,9 +154,33 @@ public partial class SanityContentProvider(
 
                 result.Add(pageDocument);
             }
-        });
+        },
+        // A document is taken from the first store that has it, so the remaining stores need not be read
+        isDone: () => processedIds.Count >= distinctIdCount);
 
         return result;
+    }
+
+    public virtual async Task<IList<string>> GetStoreIdsAsync(string projectId, string dataset)
+    {
+        var storeIds = new List<string>();
+
+        if (string.IsNullOrEmpty(projectId))
+        {
+            return storeIds;
+        }
+
+        await ForEachStoreAsync((projects, storeId) =>
+        {
+            if (FilterSources(projects, projectId, dataset).Count > 0)
+            {
+                storeIds.Add(storeId);
+            }
+
+            return Task.CompletedTask;
+        });
+
+        return storeIds;
     }
 
     /// <summary>
@@ -264,7 +288,7 @@ public partial class SanityContentProvider(
         return string.Concat(filters);
     }
 
-    private async Task ForEachStoreAsync(Func<IList<SanityProject>, string, Task> action)
+    private async Task ForEachStoreAsync(Func<IList<SanityProject>, string, Task> action, Func<bool> isDone = null)
     {
         const int storeBatchSize = 50;
         var criteria = AbstractTypeFactory<StoreSearchCriteria>.TryCreateInstance();
@@ -280,6 +304,11 @@ public partial class SanityContentProvider(
             foreach (var store in storesResult.Results)
             {
                 await TryProcessStoreAsync(store.Id, action);
+
+                if (isDone?.Invoke() == true)
+                {
+                    return;
+                }
             }
 
             criteria.Skip += storeBatchSize;
