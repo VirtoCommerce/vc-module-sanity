@@ -52,8 +52,9 @@ public class SanityConverter : ISanityConverter
 
         pageDocument.OuterId = documentId;
         pageDocument.Id = pageDocument.OuterId;
-        pageDocument.CreatedDate = body["_createdAt"]?.ToObject<DateTime>() ?? DateTime.UtcNow;
-        pageDocument.ModifiedDate = body["_updatedAt"]?.ToObject<DateTime>() ?? DateTime.UtcNow;
+        // DateTime? rather than DateTime: a JSON null must fall back to the current time, not throw
+        pageDocument.CreatedDate = body["_createdAt"]?.ToObject<DateTime?>() ?? DateTime.UtcNow;
+        pageDocument.ModifiedDate = body["_updatedAt"]?.ToObject<DateTime?>() ?? DateTime.UtcNow;
 
         var idStartsWithDrafts = pageDocument.Id.StartsWithIgnoreCase("drafts.");
 

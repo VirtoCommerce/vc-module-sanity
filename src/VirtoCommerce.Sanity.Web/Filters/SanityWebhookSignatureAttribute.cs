@@ -101,10 +101,10 @@ public sealed partial class SanityWebhookSignatureAttribute : Attribute, IAsyncR
         }
 
         var secrets = options.WebhookSecrets.Where(x => !string.IsNullOrEmpty(x)).ToList();
-        var signatures = await ComputeSignaturesAsync(request, timestampText, secrets, options.WebhookMaxBodySize);
-        if (signatures == null)
+        var (signatures, readError) = await ComputeSignaturesAsync(request, timestampText, secrets, options.WebhookMaxBodySize);
+        if (readError != null)
         {
-            return $"the body is larger than {options.WebhookMaxBodySize} bytes";
+            return readError;
         }
 
         if (signatures.Any(x => CryptographicOperations.FixedTimeEquals(x, expectedSignature)))
@@ -118,10 +118,10 @@ public sealed partial class SanityWebhookSignatureAttribute : Attribute, IAsyncR
 
     /// <summary>
     /// Hashes "&lt;timestamp&gt;.&lt;raw body&gt;" with every secret while reading the bytes as received,
-    /// then rewinds the body so that model binding can read it again. The body is buffered by the
-    /// request itself, up to <paramref name="maxBodySize"/>; returns null when it is larger.
+    /// then rewinds the body so that model binding can read it again. Returns a rejection reason instead
+    /// of signatures when the body is larger than <paramref name="maxBodySize"/> or cannot be read.
     /// </summary>
-    private static async Task<IList<byte[]>> ComputeSignaturesAsync(HttpRequest request, string timestampText, IList<string> secrets, long maxBodySize)
+    private static async Task<(IList<byte[]> Signatures, string Error)> ComputeSignaturesAsync(HttpRequest request, string timestampText, IList<string> secrets, long maxBodySize)
     {
         var hashes = secrets.Select(x => IncrementalHash.CreateHMAC(HashAlgorithmName.SHA256, Encoding.UTF8.GetBytes(x))).ToList();
 
@@ -130,20 +130,21 @@ public sealed partial class SanityWebhookSignatureAttribute : Attribute, IAsyncR
             var prefix = Encoding.UTF8.GetBytes($"{timestampText}.");
             hashes.ForEach(x => x.AppendData(prefix));
 
-            request.EnableBuffering(BodyBufferThreshold, maxBodySize);
+            // The size limit is enforced by the byte count below, which also covers a body that is already
+            // seekable and therefore not wrapped by EnableBuffering. The buffering stream's own limit is set
+            // one read further, so it never trips first and an IOException means a failed read.
+            request.EnableBuffering(BodyBufferThreshold, maxBodySize + BodyReadBufferSize);
             request.Body.Position = 0;
 
             var buffer = new byte[BodyReadBufferSize];
             long totalRead = 0;
             int read;
-            while ((read = await request.Body.ReadAsync(buffer)) > 0)
+            while ((read = await request.Body.ReadAsync(buffer, request.HttpContext.RequestAborted)) > 0)
             {
-                // Counted here as well: a body that is already seekable is not wrapped by EnableBuffering,
-                // so its limit would not apply
                 totalRead += read;
                 if (totalRead > maxBodySize)
                 {
-                    return null;
+                    return (null, $"the body is larger than {maxBodySize} bytes");
                 }
 
                 hashes.ForEach(x => x.AppendData(buffer, 0, read));
@@ -151,12 +152,12 @@ public sealed partial class SanityWebhookSignatureAttribute : Attribute, IAsyncR
 
             request.Body.Position = 0;
 
-            return hashes.Select(x => x.GetHashAndReset()).ToList();
+            return (hashes.Select(x => x.GetHashAndReset()).ToList(), null);
         }
-        catch (IOException)
+        catch (IOException ex)
         {
-            // Thrown by the buffering stream when the body exceeds its limit
-            return null;
+            // E.g. the client disconnected while sending the body
+            return (null, $"the body could not be read: {ex.Message}");
         }
         finally
         {

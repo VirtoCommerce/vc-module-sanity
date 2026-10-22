@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using VirtoCommerce.Sanity.Core;
@@ -24,13 +25,13 @@ public class SanityLinkResolver(ISanityApiClient apiClient) : ISanityLinkResolve
     private const string ImageAssetPrefix = "image-";
     private const string FileAssetPrefix = "file-";
 
-    public virtual async Task ResolveLinksAsync(string projectId, string dataset, string apiToken, IList<JObject> documents)
+    public virtual async Task ResolveLinksAsync(string projectId, string dataset, string apiToken, IList<JObject> documents, CancellationToken cancellationToken = default)
     {
         var references = documents.SelectMany(CollectReferences).ToList();
 
         ResolveAssetUrls(projectId, dataset, references.Where(IsAssetReference));
 
-        await ResolveDocumentSlugsAsync(projectId, dataset, apiToken, references.Where(x => !IsAssetReference(x)).ToList());
+        await ResolveDocumentSlugsAsync(projectId, dataset, apiToken, references.Where(x => !IsAssetReference(x)).ToList(), cancellationToken);
     }
 
     protected virtual void ResolveAssetUrls(string projectId, string dataset, IEnumerable<JObject> assetReferences)
@@ -63,7 +64,7 @@ public class SanityLinkResolver(ISanityApiClient apiClient) : ISanityLinkResolve
         return $"{AssetCdnBaseUrl}/{kind}/{projectId}/{dataset}/{name[..extensionSeparator]}.{name[(extensionSeparator + 1)..]}";
     }
 
-    protected virtual async Task ResolveDocumentSlugsAsync(string projectId, string dataset, string apiToken, IList<JObject> references)
+    protected virtual async Task ResolveDocumentSlugsAsync(string projectId, string dataset, string apiToken, IList<JObject> references, CancellationToken cancellationToken)
     {
         if (references.Count == 0)
         {
@@ -75,7 +76,7 @@ public class SanityLinkResolver(ISanityApiClient apiClient) : ISanityLinkResolve
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
-        var slugsByDocumentId = await GetSlugsByDocumentIdAsync(projectId, dataset, apiToken, referencedIds);
+        var slugsByDocumentId = await GetSlugsByDocumentIdAsync(projectId, dataset, apiToken, referencedIds, cancellationToken);
 
         foreach (var reference in references)
         {
@@ -87,7 +88,7 @@ public class SanityLinkResolver(ISanityApiClient apiClient) : ISanityLinkResolve
     }
 
     protected virtual async Task<IDictionary<string, string>> GetSlugsByDocumentIdAsync(
-        string projectId, string dataset, string apiToken, IList<string> documentIds)
+        string projectId, string dataset, string apiToken, IList<string> documentIds, CancellationToken cancellationToken)
     {
         var slugsByDocumentId = new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -95,7 +96,7 @@ public class SanityLinkResolver(ISanityApiClient apiClient) : ISanityLinkResolve
         {
             var idsFilter = string.Join(", ", batch.Select(id => $"\"{id}\""));
             var query = $"*[_id in [{idsFilter}]]{{_id, \"{SlugPropertyName}\": {SlugProjection}}}";
-            var response = await apiClient.QueryAsync(projectId, dataset, apiToken, query);
+            var response = await apiClient.QueryAsync(projectId, dataset, apiToken, query, cancellationToken);
 
             foreach (var document in response.Results)
             {

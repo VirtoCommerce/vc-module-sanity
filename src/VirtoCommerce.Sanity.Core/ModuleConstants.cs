@@ -67,12 +67,14 @@ public static class ModuleConstants
                 DefaultValue = string.Empty,
             };
 
+            // No default value on purpose: the store settings blade saves every displayed setting with its default,
+            // which would override the legacy PageType fallback. An empty value means PageType, then "page".
             public static SettingDescriptor DocumentTypes { get; } = new()
             {
                 Name = $"{GroupName}.DocumentTypes",
                 GroupName = $"CMS|{GroupName}",
                 ValueType = SettingValueType.ShortText,
-                DefaultValue = "page",
+                DefaultValue = string.Empty,
             };
 
             // The single JSON setting describing all Sanity sources of the store: an array of projects, each with its own

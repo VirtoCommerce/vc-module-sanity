@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using VirtoCommerce.Sanity.Core.Services;
@@ -41,7 +42,7 @@ public class SanityLinkResolverTests
         }
         """);
 
-        await resolver.ResolveLinksAsync("project", "production", "token", [document]);
+        await resolver.ResolveLinksAsync("project", "production", "token", [document], TestContext.Current.CancellationToken);
 
         Assert.Equal("about-us", document.SelectToken("columns[0].links[0].link.internalLink.slug")?.ToString());
         Assert.Equal("contacts", document.SelectToken("legalLinks[0].internalLink.slug")?.ToString());
@@ -67,7 +68,7 @@ public class SanityLinkResolverTests
         }
         """);
 
-        await resolver.ResolveLinksAsync("project", "production", "token", [document]);
+        await resolver.ResolveLinksAsync("project", "production", "token", [document], TestContext.Current.CancellationToken);
 
         var query = Assert.Single(apiClient.Queries);
         Assert.Contains("\"page-about\"", query);
@@ -90,7 +91,7 @@ public class SanityLinkResolverTests
         }
         """);
 
-        await resolver.ResolveLinksAsync("project", "production", "token", [document]);
+        await resolver.ResolveLinksAsync("project", "production", "token", [document], TestContext.Current.CancellationToken);
 
         Assert.Equal(
             "https://cdn.sanity.io/images/project/production/abc123-800x600.jpg",
@@ -121,7 +122,7 @@ public class SanityLinkResolverTests
         }
         """);
 
-        await resolver.ResolveLinksAsync("project", "production", "token", [document]);
+        await resolver.ResolveLinksAsync("project", "production", "token", [document], TestContext.Current.CancellationToken);
 
         Assert.Equal("about-us", document.SelectToken("link.internalLink.slug")?.ToString());
         Assert.Equal(
@@ -148,7 +149,7 @@ public class SanityLinkResolverTests
         }
         """);
 
-        await resolver.ResolveLinksAsync("project", "production", "token", [document]);
+        await resolver.ResolveLinksAsync("project", "production", "token", [document], TestContext.Current.CancellationToken);
 
         Assert.Null(document.SelectToken("image.asset.url"));
         Assert.Empty(apiClient.Queries);
@@ -172,7 +173,7 @@ public class SanityLinkResolverTests
         }
         """);
 
-        await resolver.ResolveLinksAsync("project", "production", "token", [document]);
+        await resolver.ResolveLinksAsync("project", "production", "token", [document], TestContext.Current.CancellationToken);
 
         Assert.Equal("known", document.SelectToken("known.slug")?.ToString());
         Assert.Null(document.SelectToken("unknown.slug"));
@@ -186,7 +187,7 @@ public class SanityLinkResolverTests
 
         var document = JObject.Parse("""{"_id": "doc-1", "_type": "page", "title": "Plain"}""");
 
-        await resolver.ResolveLinksAsync("project", "production", "token", [document]);
+        await resolver.ResolveLinksAsync("project", "production", "token", [document], TestContext.Current.CancellationToken);
 
         Assert.Empty(apiClient.Queries);
     }
@@ -196,7 +197,7 @@ public class SanityLinkResolverTests
         public List<string> Queries { get; } = [];
         public List<JObject> Results { get; init; } = [];
 
-        public Task<SanityQueryResponse> QueryAsync(string projectId, string dataset, string apiToken, string groqQuery)
+        public Task<SanityQueryResponse> QueryAsync(string projectId, string dataset, string apiToken, string groqQuery, CancellationToken cancellationToken = default)
         {
             Queries.Add(groqQuery);
             return Task.FromResult(new SanityQueryResponse

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 
@@ -10,5 +11,5 @@ namespace VirtoCommerce.Sanity.Core.Services;
 /// </summary>
 public interface ISanityLinkResolver
 {
-    Task ResolveLinksAsync(string projectId, string dataset, string apiToken, IList<JObject> documents);
+    Task ResolveLinksAsync(string projectId, string dataset, string apiToken, IList<JObject> documents, CancellationToken cancellationToken = default);
 }

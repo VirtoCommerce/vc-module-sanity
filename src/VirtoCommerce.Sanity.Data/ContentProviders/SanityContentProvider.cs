@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
@@ -35,15 +36,17 @@ public partial class SanityContentProvider(
 
     private const string DefaultDatasetName = "production";
 
-    public async Task<PageChangesSearchResult> SearchChangesAsync(PageChangesSearchCriteria criteria)
+    public virtual async Task<PageChangesSearchResult> SearchChangesAsync(PageChangesSearchCriteria criteria)
     {
         var allChanges = new List<IndexDocumentChange>();
         var processedProjects = new HashSet<string>();
 
+        // Shared by all stores: stores whose sources overlap must not report the same document twice,
+        // which would break TotalCount and paging; indexing takes each document id once anyway
+        var seenDocumentIds = new HashSet<string>();
+
         await ForEachStoreAsync(async (projects, _) =>
         {
-            var seenDocumentIds = new HashSet<string>();
-
             foreach (var project in projects)
             {
                 var projectKey = $"{project.ProjectId}:{string.Join("|", project.Datasets.Select(x => $"{x.Name}:{string.Join(",", x.DocumentTypes)}"))}";
@@ -71,7 +74,7 @@ public partial class SanityContentProvider(
                         allChanges.Add(new IndexDocumentChange
                         {
                             DocumentId = documentId,
-                            ChangeDate = doc["_updatedAt"]?.ToObject<DateTime>() ?? DateTime.UtcNow,
+                            ChangeDate = doc["_updatedAt"]?.ToObject<DateTime?>() ?? DateTime.UtcNow,
                             ChangeType = IndexDocumentChangeType.Modified,
                         });
                     }
@@ -92,7 +95,7 @@ public partial class SanityContentProvider(
     /// Fetches documents from the Sanity sources of every configured store and converts them to page
     /// documents with internal links and asset URLs resolved.
     /// </summary>
-    public Task<IList<PageDocument>> GetByIdsAsync(IList<string> ids)
+    public virtual Task<IList<PageDocument>> GetByIdsAsync(IList<string> ids)
     {
         return GetByIdsAsync(ids, projectId: null, dataset: null);
     }
@@ -103,7 +106,7 @@ public partial class SanityContentProvider(
     /// headers, which keeps the lookup to the source the notification came from instead of every
     /// configured one, and makes the same document id in another project irrelevant.
     /// </summary>
-    public virtual async Task<IList<PageDocument>> GetByIdsAsync(IList<string> ids, string projectId, string dataset)
+    public virtual async Task<IList<PageDocument>> GetByIdsAsync(IList<string> ids, string projectId, string dataset, CancellationToken cancellationToken = default)
     {
         var result = new List<PageDocument>();
         var processedIds = new HashSet<string>();
@@ -124,7 +127,7 @@ public partial class SanityContentProvider(
                 return;
             }
 
-            var documents = await GetDocumentsAsync(sources, sourceStoreId, remainingIds);
+            var documents = await GetDocumentsAsync(sources, sourceStoreId, remainingIds, cancellationToken);
 
             // A document is taken from the first store that has it
             result.AddRange(documents
@@ -134,7 +137,8 @@ public partial class SanityContentProvider(
         },
         // so the remaining stores need not be read once every id is found
         isDone: () => processedIds.Count >= validIds.Count,
-        logConfigurationWarnings: string.IsNullOrEmpty(projectId));
+        logConfigurationWarnings: string.IsNullOrEmpty(projectId),
+        cancellationToken: cancellationToken);
 
         return result;
     }
@@ -163,7 +167,7 @@ public partial class SanityContentProvider(
         return pageDocument;
     }
 
-    public virtual async Task<IList<string>> GetStoreIdsAsync(string projectId, string dataset)
+    public virtual async Task<IList<string>> GetStoreIdsAsync(string projectId, string dataset, CancellationToken cancellationToken = default)
     {
         var storeIds = new List<string>();
 
@@ -181,7 +185,8 @@ public partial class SanityContentProvider(
 
             return Task.CompletedTask;
         },
-        logConfigurationWarnings: false);
+        logConfigurationWarnings: false,
+        cancellationToken: cancellationToken);
 
         return storeIds;
     }
@@ -211,7 +216,7 @@ public partial class SanityContentProvider(
             .ToList();
     }
 
-    private async Task<IList<JObject>> GetDocumentsAsync(IList<SanityProject> projects, string storeId, IList<string> ids)
+    private async Task<IList<JObject>> GetDocumentsAsync(IList<SanityProject> projects, string storeId, IList<string> ids, CancellationToken cancellationToken)
     {
         // Every source (project + dataset) is queried with the full id list so conflicts (the same
         // document id in several sources) are detected and logged; the higher-priority source wins.
@@ -223,7 +228,7 @@ public partial class SanityContentProvider(
             foreach (var dataset in project.Datasets)
             {
                 var query = $"*[{BuildTypeFilter(dataset.DocumentTypes)} && _id in [{idsFilter}]]";
-                var response = await apiClient.QueryAsync(project.ProjectId, dataset.Name, project.ApiToken, query);
+                var response = await apiClient.QueryAsync(project.ProjectId, dataset.Name, project.ApiToken, query, cancellationToken);
 
                 var datasetDocuments = new List<JObject>();
 
@@ -249,7 +254,7 @@ public partial class SanityContentProvider(
 
                 if (datasetDocuments.Count > 0)
                 {
-                    await sanityLinkResolver.ResolveLinksAsync(project.ProjectId, dataset.Name, project.ApiToken, datasetDocuments);
+                    await sanityLinkResolver.ResolveLinksAsync(project.ProjectId, dataset.Name, project.ApiToken, datasetDocuments, cancellationToken);
                 }
             }
         }
@@ -296,7 +301,7 @@ public partial class SanityContentProvider(
     /// are logged only when <paramref name="logConfigurationWarnings"/> is set: indexing reports them,
     /// while a webhook delivery reads every store's settings and would repeat them on each notification.
     /// </summary>
-    private async Task ForEachStoreAsync(Func<IList<SanityProject>, string, Task> action, Func<bool> isDone = null, bool logConfigurationWarnings = true)
+    private async Task ForEachStoreAsync(Func<IList<SanityProject>, string, Task> action, Func<bool> isDone = null, bool logConfigurationWarnings = true, CancellationToken cancellationToken = default)
     {
         ILogger configurationLogger = logConfigurationWarnings ? logger : NullLogger.Instance;
 
@@ -313,6 +318,7 @@ public partial class SanityContentProvider(
 
             foreach (var store in storesResult.Results)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 await TryProcessStoreAsync(store.Id, action, configurationLogger);
 
                 if (isDone?.Invoke() == true)
@@ -369,7 +375,8 @@ public partial class SanityContentProvider(
             {
                 var configuredProjects = JsonConvert.DeserializeObject<List<SanityProject>>(rawProjects) ?? [];
 
-                projects.AddRange(configuredProjects.Where(project => TryPrepareProject(project, settings, storeId, defaultApiToken, configurationLogger)));
+                // A null entry ("[null]") is skipped like any other invalid one
+                projects.AddRange(configuredProjects.Where(project => project != null && TryPrepareProject(project, settings, storeId, defaultApiToken, configurationLogger)));
             }
             catch (JsonException ex)
             {

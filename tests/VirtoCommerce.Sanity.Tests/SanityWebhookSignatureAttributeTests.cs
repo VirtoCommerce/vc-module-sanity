@@ -85,6 +85,25 @@ public class SanityWebhookSignatureAttributeTests
         Assert.IsType<UnauthorizedResult>(context.Result);
     }
 
+    [Fact]
+    public async Task BodyReadFails_RequestIsRejected()
+    {
+        var context = CreateContext(Body, Sign(Body, Secret, DateTimeOffset.UtcNow), new SanityOptions { WebhookSecrets = [Secret] });
+        context.HttpContext.Request.Body = new FailingStream();
+
+        Assert.False(await ExecuteAsync(context));
+        Assert.IsType<UnauthorizedResult>(context.Result);
+    }
+
+    // Simulates a client that disconnects while sending the body
+    private sealed class FailingStream : MemoryStream
+    {
+        public override System.Threading.Tasks.ValueTask<int> ReadAsync(System.Memory<byte> buffer, System.Threading.CancellationToken cancellationToken = default)
+        {
+            throw new IOException("The client disconnected.");
+        }
+    }
+
     private static async Task<bool> ExecuteAsync(ResourceExecutingContext context)
     {
         var nextCalled = false;

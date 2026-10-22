@@ -25,6 +25,10 @@ public class SanityController(
     ILogger<SanityController> logger)
     : Controller
 {
+    public const string OperationPropertyName = "_operation";
+    public const string ProjectIdPropertyName = "_projectId";
+    public const string DatasetPropertyName = "_dataset";
+
     // POST: /api/pages/sanity
     /// <summary>
     /// Create, update or delete page in Pages module based on the notification from Sanity webhook.
@@ -45,10 +49,12 @@ public class SanityController(
         // The signature covers the body only, not the sanity-* headers. Values the webhook projection
         // puts in the body therefore take precedence, and a header contradicting them is rejected:
         // otherwise a replayed delivery could be pointed at another document or turned into a delete.
-        if (!TryUseSignedValue(body, "operation", "sanity-operation", ref operation) ||
+        // The keys start with "_" because Sanity reserves that prefix for system fields, so a document
+        // field of the same name cannot collide with them in a projection that ships the whole document.
+        if (!TryUseSignedValue(body, OperationPropertyName, "sanity-operation", ref operation) ||
             !TryUseSignedValue(body, "_id", "sanity-document-id", ref documentId) ||
-            !TryUseSignedValue(body, "projectId", "sanity-project-id", ref projectId) ||
-            !TryUseSignedValue(body, "dataset", "sanity-dataset", ref dataset))
+            !TryUseSignedValue(body, ProjectIdPropertyName, "sanity-project-id", ref projectId) ||
+            !TryUseSignedValue(body, DatasetPropertyName, "sanity-dataset", ref dataset))
         {
             return BadRequest();
         }
@@ -114,7 +120,7 @@ public class SanityController(
             }
 
             // The payload names no store; handlers of the delete event still get the store it belonged to
-            var storeIds = await sanityContentProvider.GetStoreIdsAsync(projectId, dataset);
+            var storeIds = await sanityContentProvider.GetStoreIdsAsync(projectId, dataset, HttpContext.RequestAborted);
             if (storeIds.Count == 0)
             {
                 return [deletedDocument];
@@ -130,7 +136,7 @@ public class SanityController(
                 .ToList();
         }
 
-        var pageDocuments = await sanityContentProvider.GetByIdsAsync([documentId], projectId, dataset);
+        var pageDocuments = await sanityContentProvider.GetByIdsAsync([documentId], projectId, dataset, HttpContext.RequestAborted);
 
         if (pageDocuments.Count == 0)
         {

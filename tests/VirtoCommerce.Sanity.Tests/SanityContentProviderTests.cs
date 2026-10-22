@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -313,7 +314,7 @@ public class SanityContentProviderTests
             ["store2"] = [],
         }, out var readStoreIds);
 
-        var result = await provider.GetByIdsAsync(["page-1", "page-1"], "project1", "production");
+        var result = await provider.GetByIdsAsync(["page-1", "page-1"], "project1", "production", TestContext.Current.CancellationToken);
 
         Assert.Equal("store1", Assert.Single(result).StoreId);
         Assert.Equal(["store1"], readStoreIds.ToArray());
@@ -375,8 +376,8 @@ public class SanityContentProviderTests
             },
         }, out _);
 
-        await provider.GetStoreIdsAsync("project1", "production");
-        await provider.GetByIdsAsync(["page-1"], "project1", "production");
+        await provider.GetStoreIdsAsync("project1", "production", TestContext.Current.CancellationToken);
+        await provider.GetByIdsAsync(["page-1"], "project1", "production", TestContext.Current.CancellationToken);
 
         Assert.Empty(logger.Entries);
 
@@ -384,6 +385,72 @@ public class SanityContentProviderTests
         await provider.GetByIdsAsync(["page-1"]);
 
         Assert.Contains(logger.Entries, x => x.Level == LogLevel.Warning && x.Message.Contains("store2") && x.Message.Contains("missing"));
+    }
+
+    [Fact]
+    public async Task GetByIdsAsync_DocumentTypesEmpty_FallsBackToLegacyPageType()
+    {
+        var apiClient = new FakeSanityApiClient();
+        var provider = CreateProvider(apiClient, new InMemoryLogger(), new Dictionary<string, object>
+        {
+            [ModuleConstants.Settings.General.DocumentTypes.Name] = ModuleConstants.Settings.General.DocumentTypes.DefaultValue,
+            [ModuleConstants.Settings.General.PageType.Name] = "article",
+        });
+
+        await provider.GetByIdsAsync(["page-1"]);
+
+        Assert.Contains("_type == \"article\"", Assert.Single(apiClient.Requests).Query);
+    }
+
+    [Fact]
+    public async Task GetByIdsAsync_NoTypeSettings_UsesPage()
+    {
+        var apiClient = new FakeSanityApiClient();
+        var provider = CreateProvider(apiClient, new InMemoryLogger(), new Dictionary<string, object>
+        {
+            [ModuleConstants.Settings.General.DocumentTypes.Name] = ModuleConstants.Settings.General.DocumentTypes.DefaultValue,
+            [ModuleConstants.Settings.General.PageType.Name] = "",
+        });
+
+        await provider.GetByIdsAsync(["page-1"]);
+
+        Assert.Contains("_type == \"page\"", Assert.Single(apiClient.Requests).Query);
+    }
+
+    [Fact]
+    public async Task GetByIdsAsync_NullProjectEntry_IsSkipped()
+    {
+        var apiClient = new FakeSanityApiClient();
+        var provider = CreateProvider(apiClient, new InMemoryLogger(), new Dictionary<string, object>
+        {
+            [ModuleConstants.Settings.General.Projects.Name] = """[null, { "projectId": "projA" }]""",
+        });
+
+        await provider.GetByIdsAsync(["page-1"]);
+
+        Assert.Equal("projA", Assert.Single(apiClient.Requests).ProjectId);
+    }
+
+    [Fact]
+    public async Task SearchChangesAsync_StoresWithOverlappingSources_ReportEachDocumentOnce()
+    {
+        var apiClient = new FakeSanityApiClient();
+        apiClient.ResultsByDataset["production"] =
+        [
+            JObject.Parse("""{"_id": "page-1", "_updatedAt": "2026-09-01T00:00:00Z"}"""),
+            JObject.Parse("""{"_id": "page-2", "_updatedAt": null}"""),
+        ];
+
+        var provider = CreateProvider(apiClient, new InMemoryLogger(), new Dictionary<string, Dictionary<string, object>>
+        {
+            ["store1"] = new() { [ModuleConstants.Settings.General.DocumentTypes.Name] = "page" },
+            ["store2"] = new() { [ModuleConstants.Settings.General.DocumentTypes.Name] = "page,blog" },
+        }, out _);
+
+        var result = await provider.SearchChangesAsync(new PageChangesSearchCriteria { Take = 10 });
+
+        Assert.Equal(2, result.TotalCount);
+        Assert.Equal(["page-1", "page-2"], result.Results.Select(x => x.DocumentId).Order().ToArray());
     }
 
     [Fact]
@@ -397,7 +464,7 @@ public class SanityContentProviderTests
             ["store4"] = new() { [ModuleConstants.Settings.General.Dataset.Name] = "staging" },
         }, out _);
 
-        var storeIds = await provider.GetStoreIdsAsync("project1", "production");
+        var storeIds = await provider.GetStoreIdsAsync("project1", "production", TestContext.Current.CancellationToken);
 
         Assert.Equal(["store1"], storeIds.ToArray());
     }
@@ -516,7 +583,7 @@ public class SanityContentProviderTests
         // Keyed by "projectId:dataset" or, for single-project tests, by dataset name alone
         public Dictionary<string, List<JObject>> ResultsByDataset { get; } = [];
 
-        public Task<SanityQueryResponse> QueryAsync(string projectId, string dataset, string apiToken, string groqQuery)
+        public Task<SanityQueryResponse> QueryAsync(string projectId, string dataset, string apiToken, string groqQuery, CancellationToken cancellationToken = default)
         {
             Requests.Add((projectId, dataset, apiToken, groqQuery));
             var results = ResultsByDataset.GetValueOrDefault($"{projectId}:{dataset}")

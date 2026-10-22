@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using VirtoCommerce.Pages.Core.ContentProviders;
 using VirtoCommerce.Pages.Core.Models;
@@ -14,10 +15,10 @@ public interface ISanityContentProvider : IPageContentProvider
     /// Fetches documents the same way as indexing does, restricted to a single Sanity project and
     /// dataset when they are given.
     /// </summary>
-    Task<IList<PageDocument>> GetByIdsAsync(IList<string> ids, string projectId, string dataset);
+    Task<IList<PageDocument>> GetByIdsAsync(IList<string> ids, string projectId, string dataset, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns the ids of the enabled stores whose settings name the given Sanity project and dataset.
     /// </summary>
-    Task<IList<string>> GetStoreIdsAsync(string projectId, string dataset);
+    Task<IList<string>> GetStoreIdsAsync(string projectId, string dataset, CancellationToken cancellationToken = default);
 }

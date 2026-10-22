@@ -1,7 +1,9 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -13,6 +15,7 @@ using VirtoCommerce.Platform.Core.Events;
 using VirtoCommerce.Sanity.Core.Services;
 using VirtoCommerce.Sanity.Data.Services;
 using VirtoCommerce.Sanity.Web.Controllers.Api;
+using VirtoCommerce.Sanity.Web.Filters;
 using Xunit;
 
 namespace VirtoCommerce.Sanity.Tests;
@@ -26,10 +29,10 @@ public class SanityControllerTests
     public SanityControllerTests()
     {
         _contentProvider
-            .Setup(x => x.GetByIdsAsync(It.IsAny<IList<string>>(), It.IsAny<string>(), It.IsAny<string>()))
-            .ReturnsAsync((IList<string> ids, string _, string _) => ids.Select(id => new PageDocument { Id = id, StoreId = "store1" }).ToList());
+            .Setup(x => x.GetByIdsAsync(It.IsAny<IList<string>>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IList<string> ids, string _, string _, CancellationToken _) => ids.Select(id => new PageDocument { Id = id, StoreId = "store1" }).ToList());
         _contentProvider
-            .Setup(x => x.GetStoreIdsAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .Setup(x => x.GetStoreIdsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
     }
 
@@ -39,19 +42,19 @@ public class SanityControllerTests
         var result = await CreateController().Post(null, "update", "projA", "production", "page-1", []);
 
         Assert.IsType<OkResult>(result);
-        _contentProvider.Verify(x => x.GetByIdsAsync(It.Is<IList<string>>(ids => ids.Single() == "page-1"), "projA", "production"));
+        _contentProvider.Verify(x => x.GetByIdsAsync(It.Is<IList<string>>(ids => ids.Single() == "page-1"), "projA", "production", It.IsAny<CancellationToken>()));
         Assert.Equal("page-1", Assert.Single(_publishedEvents).Page.Id);
     }
 
     [Fact]
     public async Task Post_SignedBodyCarriesValues_HeadersAreNotNeeded()
     {
-        var body = JObject.Parse("""{"_id": "page-1", "operation": "update", "projectId": "projA", "dataset": "production"}""");
+        var body = JObject.Parse("""{"_id": "page-1", "_operation": "update", "_projectId": "projA", "_dataset": "production"}""");
 
         var result = await CreateController().Post(null, null, null, null, null, body);
 
         Assert.IsType<OkResult>(result);
-        _contentProvider.Verify(x => x.GetByIdsAsync(It.Is<IList<string>>(ids => ids.Single() == "page-1"), "projA", "production"));
+        _contentProvider.Verify(x => x.GetByIdsAsync(It.Is<IList<string>>(ids => ids.Single() == "page-1"), "projA", "production", It.IsAny<CancellationToken>()));
     }
 
     [Theory]
@@ -61,13 +64,35 @@ public class SanityControllerTests
     [InlineData("update", "page-1", "projA", "staging")]
     public async Task Post_HeaderContradictsSignedBody_RequestIsRejected(string operation, string documentId, string projectId, string dataset)
     {
-        var body = JObject.Parse("""{"_id": "page-1", "operation": "update", "projectId": "projA", "dataset": "production"}""");
+        var body = JObject.Parse("""{"_id": "page-1", "_operation": "update", "_projectId": "projA", "_dataset": "production"}""");
 
         var result = await CreateController().Post(null, operation, projectId, dataset, documentId, body);
 
         Assert.IsType<BadRequestResult>(result);
         Assert.Empty(_publishedEvents);
         _contentProvider.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Post_FullDocumentProjection_DocumentFieldsNamedLikeHeadersAreIgnored()
+    {
+        // A projection shipping the whole document: its own "operation", "projectId" and "dataset" fields
+        // are content, not routing values, and must not contradict the headers
+        var body = JObject.Parse("""{"_id": "page-1", "operation": "promo", "projectId": "other", "dataset": "other", "title": "Page"}""");
+
+        var result = await CreateController().Post(null, "update", "projA", "production", "page-1", body);
+
+        Assert.IsType<OkResult>(result);
+        _contentProvider.Verify(x => x.GetByIdsAsync(It.Is<IList<string>>(ids => ids.Single() == "page-1"), "projA", "production", It.IsAny<CancellationToken>()));
+    }
+
+    [Fact]
+    public void Post_IsAnonymousAndAuthenticatedBySignature()
+    {
+        var method = typeof(SanityController).GetMethod(nameof(SanityController.Post));
+
+        Assert.NotNull(method.GetCustomAttribute<AllowAnonymousAttribute>());
+        Assert.NotNull(method.GetCustomAttribute<SanityWebhookSignatureAttribute>());
     }
 
     [Fact]
@@ -83,7 +108,7 @@ public class SanityControllerTests
     public async Task Post_DeleteWithoutStoreInPayload_EventIsPublishedForEveryStoreOfTheSource()
     {
         _contentProvider
-            .Setup(x => x.GetStoreIdsAsync("projA", "production"))
+            .Setup(x => x.GetStoreIdsAsync("projA", "production", It.IsAny<CancellationToken>()))
             .ReturnsAsync(["store1", "store2"]);
 
         var result = await CreateController().Post(null, "delete", "projA", "production", "page-1", []);
@@ -105,7 +130,7 @@ public class SanityControllerTests
         await CreateController().Post(null, "delete", "projA", "production", null, body);
 
         Assert.Equal("store3", Assert.Single(_publishedEvents).Page.StoreId);
-        _contentProvider.Verify(x => x.GetStoreIdsAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        _contentProvider.Verify(x => x.GetStoreIdsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
