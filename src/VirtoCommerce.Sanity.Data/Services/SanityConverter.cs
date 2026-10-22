@@ -28,7 +28,16 @@ public class SanityConverter : ISanityConverter
 
     public virtual PageDocument GetPageDocument(string storeId, string cultureName, PageOperation pageOperation, JObject body, HttpRequest request)
     {
-        if (body["_type"].ToString().EqualsIgnoreCase("system.release"))
+        // Webhook notifications may carry only ids or a partial projection, so every field is read defensively
+        if (body == null)
+        {
+            return null;
+        }
+
+        var documentId = body["_id"]?.ToString();
+
+        if (documentId.IsNullOrEmpty() ||
+            body["_type"]?.ToString().EqualsIgnoreCase("system.release") == true)
         {
             return null;
         }
@@ -41,10 +50,11 @@ public class SanityConverter : ISanityConverter
         pageDocument.StoreId = body["storeId"]?.ToString();
         pageDocument.CultureName = body["cultureName"]?.ToString();
 
-        pageDocument.OuterId = body["_id"].ToString();
+        pageDocument.OuterId = documentId;
         pageDocument.Id = pageDocument.OuterId;
-        pageDocument.CreatedDate = body["_createdAt"].ToObject<DateTime>();
-        pageDocument.ModifiedDate = body["_updatedAt"].ToObject<DateTime>();
+        // DateTime? rather than DateTime: a JSON null must fall back to the current time, not throw
+        pageDocument.CreatedDate = body["_createdAt"]?.ToObject<DateTime?>() ?? DateTime.UtcNow;
+        pageDocument.ModifiedDate = body["_updatedAt"]?.ToObject<DateTime?>() ?? DateTime.UtcNow;
 
         var idStartsWithDrafts = pageDocument.Id.StartsWithIgnoreCase("drafts.");
 
